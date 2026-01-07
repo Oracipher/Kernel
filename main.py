@@ -105,6 +105,13 @@ if __name__ == "__main__":
         elif cmd == "data":
             # 查看当前的共享上下文数据
             print(f"System Context: {plugin_context}")
+            
+        elif cmd.startswith("load "):
+            try:
+                filename = cmd.split(" ", 1)[1].strip()
+                load_func(filename)
+            except IndexError:
+                print("[!] 用法： load <filename.py>")
         
         else:
             print("未知命令")
