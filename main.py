@@ -34,7 +34,7 @@ def load_confirmed_func(filename, name, path):
         run_func(mod, filename)
         print(f"[+] {filename} load successed")
         if hasattr(mod, "Plugin"):
-            plugin_instance = mod.Plugin()
+            plugin_instance = mod.Plugin(plugin_context)
             loaded_plugins[name] = plugin_instance
             plugin_instance.start()
             print(f"[+] {name} already started")
