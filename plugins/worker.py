@@ -1,3 +1,5 @@
+
+import time
 class Plugin:
     def __init__(self, context):
         self.context = context
@@ -6,6 +8,7 @@ class Plugin:
     def start(self):
         print("worker plugin already started")
         print("data is being prepared...")
+        time.sleep(10)
         self.data = "this is my status data"
         self.context['data'].append(f"{self.name}已经上线")
         
