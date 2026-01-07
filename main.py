@@ -1,6 +1,6 @@
 # main.py
 
-import importlib.util
+import importlib
 import os
 import traceback
 
@@ -120,9 +120,11 @@ if __name__ == "__main__":
                     try:
                         old_plugin = loaded_plugins[name]
                         old_plugin.stop()
-                        del loaded_plugins[name] # 从内存中移除旧的实例
                     except Exception as e:
                         print(f"[!] 停止旧实例失败者: {e}")
+                    finally:
+                        del loaded_plugins[name]
+                        # 从内存中移除旧的实例
                 
                 # 3. 强制重载模块对象
                 # 这会重新读取 .py 文件，更新内存中的类定义
