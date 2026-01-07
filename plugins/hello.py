@@ -1,17 +1,12 @@
-# def main(ctx):
-#     print("hello, there is a plugin named hello.")
-#     print("the lastest release version is: ")
-#     print(f"{ctx['version']}")
-    
-#     # 在main.py文件的元数据中添加新的数据
-#     ctx['data'].append("hello plugin has comed here")
-    
 class Plugin:
-    def __init__(self):
+    def __init__(self, context):
+        self.context = context
         self.name = "helloPlugin"
         
     def start(self):
         print("hello plugin already started")
+        print(f"系统版本: {self.context['version']}")
+        self.context['data'].append(f"{self.name}已上线")
         
     def stop(self):
         print("good by, hello plugin")
