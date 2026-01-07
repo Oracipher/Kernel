@@ -82,21 +82,25 @@ if __name__ == "__main__":
             print(f"当前存活插件: {list(loaded_plugins.keys())}")
             
         elif cmd.startswith("stop "):
-            # 这里需要修复
-            # 假设中间存在多个空格
-            # 则需要自动设置成一个空格
-            name = cmd.split(" ")
-            plugin = loaded_plugins.get(name)
-            
-            if plugin:
-                try:
-                    plugin.stop()
-                    del loaded_plugins[name]
-                    print(f"[-] 插件 {name} 已卸载")
-                except Exception as e:
-                    print(f"[!] 停止失败: {e}")
-            else:
-                print(f"[!] 找不到插件： {name}")
+            try:
+                # 这里需要修复
+                # 假设中间存在多个空格
+                # 则需要自动设置成一个空格
+                name = cmd.split(" ", 1)[1].strip()
+                plugin = loaded_plugins.get(name)
+                
+                if plugin:
+                    try:
+                        plugin.stop()
+                        del loaded_plugins[name]
+                        print(f"[-] 插件 {name} 已卸载")
+                    except Exception as e:
+                        print(f"[!] 停止失败: {e}")
+                else:
+                    print(f"[!] 找不到插件： {name}")
+            except IndexError:
+                print("[!] 语法错误")
+        
                 
         elif cmd == "data":
             # 查看当前的共享上下文数据
