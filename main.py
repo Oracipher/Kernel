@@ -87,9 +87,6 @@ if __name__ == "__main__":
             
         elif cmd.startswith("stop "):
             try:
-                # 这里需要修复
-                # 假设中间存在多个空格
-                # 则需要自动设置成一个空格
                 name = cmd.split(" ", 1)[1].strip()
                 plugin = loaded_plugins.get(name)
                 
