@@ -32,8 +32,9 @@ class PluginKernel:
 
     def load_plugin_func(self, filename):
         """加载单个插件的逻辑"""
+        filename = os.path.basename(filename)
+        name = os.path.splitext(filename)[0]
         path = os.path.join(self.PLUGIN_DIR, filename)
-        name = filename.replace(".py", "")
 
         try:
             # 动态导入的标准写法
