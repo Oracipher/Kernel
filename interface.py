@@ -1,25 +1,31 @@
 # interface.py
 
-import abc
+from abc import ABC, abstractmethod
 
-class BaseModule(abc.ABC):
-    def __init__(self, kernle_context):
-        self.context = kernle_context
-        self.name = self.__class__.__name__
-        self._is_running = False
+class IPlugin(ABC):
+    """插件接口基类
+    所有的插件必须继承此类，
+    并实现所有的@abcstractmethod装饰方法
+    """
     
-    @abc.abstractmethod
-    def on_load(self):
+    def __init__(self, context, kernel):
+        # 这里的context和kernel是内核注入近来的
+        self.context = context
+        self.kernel = kernel
+        
+    @abstractmethod
+    def start(self):
+        """插件启动时的入口
+        """
         pass
     
-    @abc.abstractmethod
-    def on_start(self):
+    @abstractmethod
+    def stop(self):
+        """插件停止/卸载是的清理逻辑
+        """
         pass
     
-    @abc.abstractmethod
-    def on_stop(self):
-        pass
-    
-    def on_unload(self):
-        print(f" >> [System] {self.name} resource recycling ...")
+    def log(self, message):
+        print(f"[{self.__class__.__name__}] {message}")
+        
         

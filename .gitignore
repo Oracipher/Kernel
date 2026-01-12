@@ -1,0 +1,12 @@
+draft/
+.draft/
+draft
+.draft
+/draft
+./draft
+
+class/
+
+.venv/
+.venv
+

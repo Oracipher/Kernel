@@ -4,6 +4,7 @@ import importlib
 import importlib.util
 import traceback
 import sys
+from interface import IPlugin
 
 class PluginKernel:
     def __init__(self):
@@ -21,7 +22,8 @@ class PluginKernel:
             os.makedirs(self.PLUGIN_DIR)
     
     def on(self, event_name: str, callback_func):
-        """注册监听器：
+        """
+        注册监听器：
         当event_name发生的时候，执行callback_func
         """
         if event_name not in self._events:
@@ -30,7 +32,8 @@ class PluginKernel:
         print(f"[System] 监听器已注册: {event_name} -> {callback_func.__name__}")
         
     def emit(self, event_name: str, **kwargs):
-        """触发事件：广播给所有监听这个事件的函数
+        """
+        触发事件：广播给所有监听这个事件的函数
         kwargs: 允许传递任意参数
         """
         if event_name in self._events:
@@ -43,14 +46,29 @@ class PluginKernel:
     
     # --- 内部核心逻辑 (通常建议加下划线前缀表示这是内部用的) ---
 
+    # def _check_interface(plugin_instance):
+    #     if not isinstance(plugin_instance, IPlugin):
+    #         print(f"[!] 警告： {name} 的plugin class 没有继承interface.IPlugin")
+            
+
     def _check_and_start(self, mod, name):
         """检查模块是否有 Plugin 类并启动"""
         if hasattr(mod, "Plugin"):
-            # 传参：name 必须从外部传进来
-            plugin_instance = mod.Plugin(self.context, self)
-            self.loaded_plugins[name] = plugin_instance
-            plugin_instance.start()
-            print(f"[+] {name} 加载并启动成功")
+            try:
+                # 传参：name 必须从外部传进来
+                plugin_instance = mod.Plugin(self.context, self)
+                # kernel._check_interface(plugin_instance)
+                if not isinstance(plugin_instance, IPlugin):
+                    print(f"[!] 警告: {name} 的plugin类没有继承interface.IPlugin")
+                self.loaded_plugins[name] = plugin_instance
+                plugin_instance.start()
+                print(f"[+] {name} 加载并启动成功")
+            except TypeError as e:
+                print(f"[!] {name} 加载失败：未实现接口规范")
+                print(f"错误信息： {e}")
+            except Exception as e:
+                print(f"[!] {name} 启动异常： {e}")
+                
         else:
             print(f"[*] {name} 忽略：未找到 Plugin 类")
 
