@@ -3,7 +3,8 @@
 from abc import ABC, abstractmethod
 
 class IPlugin(ABC):
-    """插件接口基类
+    """
+    插件接口基类
     所有的插件必须继承此类，
     并实现所有的@abcstractmethod装饰方法
     """
@@ -16,13 +17,15 @@ class IPlugin(ABC):
         
     @abstractmethod
     def start(self):
-        """插件启动时的入口
+        """
+        插件启动时的入口
         """
         pass
     
     @abstractmethod
     def stop(self):
-        """插件停止/卸载是的清理逻辑
+        """
+        插件停止/卸载是的清理逻辑
         """
         pass
     
