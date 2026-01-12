@@ -5,6 +5,7 @@ import importlib.util
 import traceback
 import sys
 from interface import IPlugin
+from api import PluginAPI
 
 class PluginKernel:
     def __init__(self):
@@ -51,13 +52,33 @@ class PluginKernel:
     #         print(f"[!] 警告： {name} 的plugin class 没有继承interface.IPlugin")
             
 
+    # def _check_and_start(self, mod, name):
+    #     """检查模块是否有 Plugin 类并启动"""
+    #     if hasattr(mod, "Plugin"):
+    #         try:
+    #             # 传参：name 必须从外部传进来
+    #             plugin_instance = mod.Plugin(self.context, self)
+    #             # kernel._check_interface(plugin_instance)
+    #             if not isinstance(plugin_instance, IPlugin):
+    #                 print(f"[!] 警告: {name} 的plugin类没有继承interface.IPlugin")
+    #             self.loaded_plugins[name] = plugin_instance
+    #             plugin_instance.start()
+    #             print(f"[+] {name} 加载并启动成功")
+    #         except TypeError as e:
+    #             print(f"[!] {name} 加载失败：未实现接口规范")
+    #             print(f"错误信息： {e}")
+    #         except Exception as e:
+    #             print(f"[!] {name} 启动异常： {e}")
+                
+    #     else:
+    #         print(f"[*] {name} 忽略：未找到 Plugin 类")
+    
     def _check_and_start(self, mod, name):
         """检查模块是否有 Plugin 类并启动"""
         if hasattr(mod, "Plugin"):
             try:
-                # 传参：name 必须从外部传进来
-                plugin_instance = mod.Plugin(self.context, self)
-                # kernel._check_interface(plugin_instance)
+                plugin_api = PluginAPI(self, name)
+                plugin_instance = mod.Plugin(plugin_api)
                 if not isinstance(plugin_instance, IPlugin):
                     print(f"[!] 警告: {name} 的plugin类没有继承interface.IPlugin")
                 self.loaded_plugins[name] = plugin_instance

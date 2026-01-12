@@ -8,10 +8,11 @@ class IPlugin(ABC):
     并实现所有的@abcstractmethod装饰方法
     """
     
-    def __init__(self, context, kernel):
+    def __init__(self, api):
         # 这里的context和kernel是内核注入近来的
-        self.context = context
-        self.kernel = kernel
+        # self.context = context
+        # self.kernel = kernel
+        self.api = api
         
     @abstractmethod
     def start(self):
@@ -25,7 +26,7 @@ class IPlugin(ABC):
         """
         pass
     
-    def log(self, message):
-        print(f"[{self.__class__.__name__}] {message}")
+    # def log(self, message):
+    #     print(f"[{self.__class__.__name__}] {message}")
         
         
