@@ -1,5 +1,17 @@
 # Python Micro Kernel
 
+## 说明
+
+explain - 解释
+direct  - 说明
+
+success - 成功执行
+
+Notice  - 注意错误
+warn    - 警告错误
+Error   - 严重错误
+
+
 ## 想法
 
 1. 使用类型提示信息type hints

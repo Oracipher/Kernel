@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 
-class IPlugin(ABC):
+class BaseModule(ABC):
     """
     插件接口基类
     所有的插件必须继承此类，
