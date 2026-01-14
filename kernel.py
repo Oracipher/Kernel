@@ -495,8 +495,8 @@ if __name__ == "__main__":
                     kwargs = {}
                     for pair in parts[2:]:
                         if '=' in pair:
-                            k, v = pair.split('=', 1)
-                            kwargs[k] = v
+                            key, val = pair.split('=', 1)
+                            kwargs[key] = val
                     print(f"Calling sync event: {evt}")
                     res = k.sync_call_event(evt, **kwargs)
                     print(f"Result: {res}")
