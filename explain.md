@@ -1,3 +1,114 @@
+### 📂 目录结构预览
+
+```text
+/project_root
+  ├── interface.py           # 接口定义（核心契约）
+  ├── api.py                 # 插件 API（沙箱层）
+  ├── kernel.py              # 内核（包含依赖解析算法）
+  └── plugins/               # 插件目录
+      ├── core_system/       # [插件1] 被依赖的基础插件
+      │   ├── __init__.py    # 插件入口代码
+      │   └── config.json    # 配置文件
+      └── security_tools/    # [插件2] 依赖 core_system
+          ├── __init__.py
+          └── config.json
+```
+
+---
+
+### 1. 接口层 (`interface.py`)
+
+```python
+# interface.py
+from abc import ABC, abstractmethod
+from typing import Any, TYPE_CHECKING
+
+# 使用 TYPE_CHECKING 避免循环导入，只用于类型提示
+if TYPE_CHECKING:
+    from api import PluginAPI
+
+class IPlugin(ABC):
+    """
+    插件接口基类
+    """
+    
+    def __init__(self, api: 'PluginAPI') -> None:
+        self.api = api
+        
+    @abstractmethod
+    def start(self) -> None:
+        """插件启动入口"""
+        pass
+    
+    @abstractmethod
+    def stop(self) -> None:
+        """插件停止清理"""
+        pass
+```
+
+### 2. 中间层 (`api.py`)
+
+```python
+# api.py
+import os
+import json
+from typing import Any, Callable, Dict, Optional, List, Union
+
+# 为了类型提示，引用 Kernel 但不直接实例化
+if False:
+    from kernel import PluginKernel
+
+class PluginAPI:
+    """
+    内核暴露给插件的唯一操作接口（沙箱层）
+    """
+    
+    def __init__(self, kernel: 'PluginKernel', plugin_name: str, plugin_dir: str) -> None:
+        self._kernel = kernel
+        self._plugin_name = plugin_name
+        self._plugin_dir = plugin_dir
+        
+    @property
+    def plugin_dir(self) -> str:
+        """获取当前插件的目录路径"""
+        return self._plugin_dir
+
+    def log(self, message: str) -> None:
+        print(f"[{self._plugin_name}] {message}")
+        
+    def get_plugin_config(self) -> Dict[str, Any]:
+        """读取插件目录下 config.json 的内容"""
+        config_path = os.path.join(self._plugin_dir, "config.json")
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                self.log(f"读取配置文件失败: {e}")
+                return {}
+        return {}
+
+    # --- 事件系统代理 ---
+    def on(self, event_name: str, callback: Callable[..., Any]) -> None:
+        self._kernel.on(event_name, callback)
+        
+    def emit(self, event_name: str, **kwargs: Any) -> None:
+        self._kernel.emit(event_name, **kwargs)
+        
+    # --- 数据中心代理 ---
+    def get_data(self, key: str, default: Any = None) -> Any:
+        return self._kernel.context.get(key, default)
+    
+    def set_data(self, key: str, value: Any) -> None:
+        if key == "admin":
+            self.log("权限不足：无法修改 admin")
+            return
+        self._kernel.context[key] = value
+```
+
+### 3. 核心层 (`kernel.py`)
+
+```python
 # kernel.py
 import os
 import sys
@@ -189,3 +300,71 @@ if __name__ == "__main__":
                 print(json.dumps(kernel.context, indent=2, ensure_ascii=False))
         except KeyboardInterrupt:
             break
+```
+
+---
+
+### 4. 插件示例
+
+#### 插件 A: `plugins/core_system/`
+
+1.  **config.json**
+    ```json
+    {
+        "name": "core_system",
+        "version": "1.0.0",
+        "dependencies": []
+    }
+    ```
+
+2.  **__init__.py**
+    ```python
+    from interface import IPlugin
+
+    class Plugin(IPlugin):
+        def start(self) -> None:
+            config = self.api.get_plugin_config()
+            version = config.get("version", "0.0")
+            
+            self.api.log(f"核心系统 (v{version}) 正在启动...")
+            
+            # 初始化核心数据
+            self.api.set_data("core_status", "ONLINE")
+            self.api.set_data("max_connections", 100)
+            self.api.log("核心数据已初始化")
+
+        def stop(self) -> None:
+            self.api.log("核心系统停止")
+    ```
+
+#### 插件 B: `plugins/security_tools/` (依赖 core_system)
+
+1.  **config.json**
+    ```json
+    {
+        "name": "security_tools",
+        "version": "1.2",
+        "dependencies": ["core_system"]
+    }
+    ```
+
+2.  **__init__.py**
+    ```python
+    from interface import IPlugin
+
+    class Plugin(IPlugin):
+        def start(self) -> None:
+            self.api.log("安全工具正在启动...")
+            
+            # 检查依赖插件是否已经准备好了数据
+            # 如果没有依赖管理，这里可能会读取到 None，导致报错
+            core_status = self.api.get_data("core_status")
+            
+            if core_status == "ONLINE":
+                self.api.log("检测到核心系统在线，安全模块挂载成功！")
+            else:
+                self.api.log("警告：核心系统未就绪！")
+
+        def stop(self) -> None:
+            self.api.log("安全工具卸载")
+    ```

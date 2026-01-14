@@ -1,44 +1,55 @@
 # api.py
+import os
+import json
+from typing import Any, Callable, Dict, Optional, List, Union
+
+# 为了类型提示，引用 Kernel 但不直接实例化
+if False:
+    from kernel import PluginKernel
 
 class PluginAPI:
-    """这是内核暴露给插件的唯一操作接口中间层
-    插件只能通过这个类与系统交互
-    无法直接触碰Kernel实例
+    """
+    内核暴露给插件的唯一操作接口（沙箱层）
     """
     
-    def __init__(self, kernel, plugin_name):
-        """我们在内部持有kernel的引用
-        但是在python的约定中.
-        以下划线开头的变量不建议在外部被访问
-        """
+    def __init__(self, kernel: 'PluginKernel', plugin_name: str, plugin_dir: str) -> None:
         self._kernel = kernel
         self._plugin_name = plugin_name
+        self._plugin_dir = plugin_dir
         
-    def log(self, message):
-        """插件专属的日志方法
-        这样做能够自动带上插件的名字，方便调试
-        """
+    @property
+    def plugin_dir(self) -> str:
+        """获取当前插件的目录路径"""
+        return self._plugin_dir
+
+    def log(self, message: str) -> None:
         print(f"[{self._plugin_name}] {message}")
         
-    def on(self, event_name, callback):
-        """代理注册监听
-        """
-        # 实例还是调用内核的方式，但是对插件来说是透明的
+    def get_plugin_config(self) -> Dict[str, Any]:
+        """读取插件目录下 config.json 的内容"""
+        config_path = os.path.join(self._plugin_dir, "config.json")
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                self.log(f"读取配置文件失败: {e}")
+                return {}
+        return {}
+
+    # --- 事件系统代理 ---
+    def on(self, event_name: str, callback: Callable[..., Any]) -> None:
         self._kernel.on(event_name, callback)
         
-    def emit(self, event_name, **kwargs):
-        """代理发送事件
-        """
+    def emit(self, event_name: str, **kwargs: Any) -> None:
         self._kernel.emit(event_name, **kwargs)
         
-    def get_config(self, key):
-        """只允许读取配置，不允许修改
-        """
-        return self._kernel.context.get(key)
+    # --- 数据中心代理 ---
+    def get_data(self, key: str, default: Any = None) -> Any:
+        return self._kernel.context.get(key, default)
     
-    
-    # 如果你允许插件修改数据，可以单独提供方法，并在这里做校验
-    # def set_data(self, key, value):
-    #     if key == "admin": 
-    #         raise PermissionError("你不允许修改管理员账号！")
-    #     self._kernel.context[key] = value
+    def set_data(self, key: str, value: Any) -> None:
+        if key == "admin":
+            self.log("权限不足：无法修改 admin")
+            return
+        self._kernel.context[key] = value
