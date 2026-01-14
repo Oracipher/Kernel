@@ -1,6 +1,6 @@
-# kernel.py
 import os
 import sys
+import re
 import json
 import gc
 import ast
@@ -16,35 +16,37 @@ from typing import Dict, List, Any, Callable, Optional, Tuple
 from interface import IPlugin
 from api import PluginAPI
 
-# --- [新增] 安全审计器 ---
+# --- 安全审计器 (静态代码检查) ---
 class SecurityAuditor(ast.NodeVisitor):
     """
-    [解决问题: 安全性]
-    通过 AST 静态分析插件代码，禁止高危操作。
+    [安全模块] 代码静态审计
+    注意：Python 的动态特性意味着无法通过静态分析完全阻止恶意行为。
+    此模块主要作为"代码规范检查"使用，防止无意的危险操作。
     """
     def __init__(self):
         self.errors = []
-        # 禁止导入的模块
-        self.banned_imports = {'os', 'subprocess', 'shutil', 'sys'}
-        # 禁止调用的函数名 (简单匹配)
-        self.banned_calls = {'eval', 'exec', 'system', 'popen'}
+        # 禁止导入的系统级模块
+        self.banned_imports = {'os', 'subprocess', 'shutil', 'sys', 'socket'}
+        # 禁止调用的高危函数
+        self.banned_calls = {'eval', 'exec', 'system', 'popen', 'spawn'}
 
     def visit_Import(self, node):
         for alias in node.names:
             if alias.name.split('.')[0] in self.banned_imports:
-                self.errors.append(f"Line {node.lineno}: 禁止导入 '{alias.name}'")
+                self.errors.append(f"Line {node.lineno}: 禁止直接导入系统模块 '{alias.name}'")
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node):
         if node.module and node.module.split('.')[0] in self.banned_imports:
-            self.errors.append(f"Line {node.lineno}: 禁止从 '{node.module}' 导入")
+            self.errors.append(f"Line {node.lineno}: 禁止从系统模块 '{node.module}' 导入")
         self.generic_visit(node)
 
     def visit_Call(self, node):
+        # 检查函数调用，如 eval()
         if isinstance(node.func, ast.Name):
             if node.func.id in self.banned_calls:
-                self.errors.append(f"Line {node.lineno}: 禁止调用 '{node.func.id}'")
-        # 检查属性调用如 os.system (简化版)
+                self.errors.append(f"Line {node.lineno}: 禁止调用高危函数 '{node.func.id}'")
+        # 检查属性调用，如 os.system()
         elif isinstance(node.func, ast.Attribute):
             if node.func.attr in self.banned_calls:
                 self.errors.append(f"Line {node.lineno}: 禁止调用属性方法 '{node.func.attr}'")
@@ -59,13 +61,13 @@ def scan_code_security(file_path: str) -> List[str]:
         auditor.visit(tree)
         return auditor.errors
     except Exception as e:
-        return [f"解析失败: {str(e)}"]
+        return [f"语法解析失败: {str(e)}"]
 
 @dataclass
 class PluginMeta:
     name: str
     path: str
-    version: str = "0.0.0"  # [新增] 版本号
+    version: str = "0.0.0"
     dependencies: List[str] = field(default_factory=list)
     module: Any = None
     instance: Optional[IPlugin] = None
@@ -75,23 +77,27 @@ class PluginMeta:
 class PluginKernel:
     def __init__(self) -> None:
         self.PLUGIN_DIR = "plugins"
+        # 内核级锁，保护元数据和 Context 读写
         self._lock = threading.RLock()
         
         self.context_global: Dict[str, Any] = {
-            "version": "3.3 Secure-Core",
-            "admin": "Administrator"
+            "kernel_version": "3.5.0",
+            "environment": "production"
         }
         self.context_local: Dict[str, Dict[str, Any]] = {}
         self.plugins_meta: Dict[str, PluginMeta] = {}
+        
+        # 事件总线: {event_name: [(callback, owner_name), ...]}
         self._events: Dict[str, List[tuple]] = {}
         
-        # 事件处理线程池
-        self._executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="EventWorker")
+        # 异步任务线程池 (仅用于 emit 异步分发)
+        self._executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="KernelWorker")
         
         if not os.path.exists(self.PLUGIN_DIR):
             os.makedirs(self.PLUGIN_DIR)
 
-    # --- 线程安全的数据访问接口 (保持不变) ---
+    # --- 线程安全的数据访问接口 ---
+    
     def thread_safe_get_data(self, caller: str, key: str, scope: str, default: Any) -> Any:
         with self._lock:
             if scope == 'global':
@@ -103,7 +109,8 @@ class PluginKernel:
     def thread_safe_set_data(self, caller: str, key: str, value: Any, scope: str) -> None:
         with self._lock:
             if scope == 'global':
-                if key == "admin": return
+                if key.startswith("kernel_"):
+                    return # 保护内核保留字段
                 self.context_global[key] = value
             else:
                 if caller not in self.context_local:
@@ -119,14 +126,20 @@ class PluginKernel:
     def unregister_events_by_owner(self, owner: str) -> None:
         with self._lock:
             for name in list(self._events.keys()):
+                # 过滤掉属于该 owner 的回调
                 self._events[name] = [
                     (cb, o) for cb, o in self._events[name] if o != owner
                 ]
+                # 清理空列表
+                if not self._events[name]:
+                    del self._events[name]
 
-    # --- [修改] 事件系统 (解决死锁) ---
+    # --- 事件系统 ---
 
     def emit(self, event_name: str, **kwargs: Any) -> List[Future]:
-        """异步分发：投递到线程池，返回 Future"""
+        """
+        异步分发：将任务提交到线程池。
+        """
         callbacks_snapshot = []
         with self._lock:
             if event_name in self._events:
@@ -134,16 +147,16 @@ class PluginKernel:
         
         futures = []
         for func, owner in callbacks_snapshot:
-            f = self._executor.submit(self._safe_event_call, func, event_name, owner, **kwargs)
+            # 捕获异常的包装器
+            f = self._executor.submit(self._safe_exec, func, event_name, owner, **kwargs)
             futures.append(f)
         return futures
 
     def sync_call_event(self, event_name: str, timeout: float = 5.0, **kwargs) -> List[Any]:
         """
-        [解决问题: 死锁]
-        不再使用 ThreadPoolExecutor 进行同步等待。
-        改为在当前线程直接顺序执行回调 (Inline Execution)。
-        这避免了 "Worker 等待 Worker" 造成的资源饥饿死锁。
+        同步调用：在当前线程顺序执行。
+        优势：避免线程池死锁。
+        缺点：如果插件回调阻塞，会卡住调用者。
         """
         callbacks_snapshot = []
         with self._lock:
@@ -154,92 +167,123 @@ class PluginKernel:
         if not callbacks_snapshot:
             return results
 
-        # 顺序执行，捕获异常，确保不崩溃
         for func, owner in callbacks_snapshot:
             try:
-                # 简单的超时控制较难在同步调用中实现，除非使用 signal 或额外线程
-                # 这里假设同步调用必须是快速响应的
+                # 注意：此处未实现严格的函数级超时中断，依赖插件自觉性
                 res = func(**kwargs)
                 results.append(res)
             except Exception as e:
-                print(f"[Warn] 同步调用异常 [{owner}] -> {event_name}: {e}")
-                results.append(e)
+                print(f"[Kernel Warning] 同步调用异常 [{owner}] -> {event_name}: {e}")
+                results.append(e) # 将异常作为结果返回，不中断流程
                 
         return results
 
-    def _safe_event_call(self, func: Callable, event_name: str, owner: str, **kwargs) -> Any:
+    def _safe_exec(self, func: Callable, event_name: str, owner: str, **kwargs) -> Any:
         try:
             return func(**kwargs)
         except Exception as e:
-            print(f"[!] 事件执行异常 [{owner}] -> {event_name}: {e}")
+            print(f"[Kernel Error] 异步执行异常 [{owner}] -> {event_name}: {e}")
             raise e
 
-    # --- [修改] 依赖与版本控制 ---
+    # --- 依赖与版本控制 (修复版) ---
 
     def _parse_version(self, v_str: str) -> Tuple[int, ...]:
-        """简单版本解析 1.2.0 -> (1, 2, 0)"""
+        """1.2.0 -> (1, 2, 0)"""
         try:
             return tuple(map(int, v_str.split('.')))
-        except:
+        except Exception:
             return (0, 0, 0)
 
     def _check_dep_version(self, req_str: str) -> bool:
         """
-        [解决问题: 版本控制]
-        解析格式: "core_system>=1.0.0" 或 "plugin_a"
+        健壮的依赖解析
+        支持格式: "pluginA", "pluginA>=1.0.0", "pluginA==2.0", "pluginA<3.0"
         """
-        if ">=" in req_str:
-            name, ver_req = req_str.split(">=", 1)
-            name = name.strip()
-            ver_req = ver_req.strip()
-            
-            if name not in self.plugins_meta:
-                return False # 依赖不存在
-            
-            current_ver = self.plugins_meta[name].version
-            if self._parse_version(current_ver) < self._parse_version(ver_req):
-                print(f"[Dep Error] {name} 版本 {current_ver} < 需要 {ver_req}")
-                return False
+        # 正则匹配：名称 + (可选的操作符和版本号)
+        # Group 1: Name, Group 2: Op, Group 3: Version
+        pattern = r"^([a-zA-Z0-9_\-]+)(?:([<>=!]+)([\d\.]+))?$"
+        match = re.match(pattern, req_str.strip())
+        
+        if not match:
+            print(f"[Dep Error] 依赖格式无法解析: {req_str}")
+            return False
+
+        name, op, ver_req = match.groups()
+        
+        if name not in self.plugins_meta:
+            return False # 依赖插件完全未加载
+        
+        meta = self.plugins_meta[name]
+        
+        # 如果没有指定版本操作符，只要存在即可
+        if not op:
             return True
-        else:
-            # 无版本要求，只检查存在性
-            return req_str.strip() in self.plugins_meta
+
+        curr_ver = self._parse_version(meta.version)
+        req_ver = self._parse_version(ver_req)
+
+        if op == ">=":
+            return curr_ver >= req_ver
+        elif op == ">":
+            return curr_ver > req_ver
+        elif op == "==":
+            return curr_ver == req_ver
+        elif op == "<=":
+            return curr_ver <= req_ver
+        elif op == "<":
+            return curr_ver < req_ver
+        
+        return False
 
     def _resolve_dependencies(self) -> List[str]:
+        """拓扑排序解析加载顺序"""
         ordered = []
         visited = set()
         visiting = set()
 
         def visit(name: str):
-            if name in visited: return
-            if name in visiting: raise Exception(f"循环依赖: {name}")
-            if name not in self.plugins_meta: return
+            if name in visited:
+                return
+            if name in visiting:
+                raise Exception(f"检测到循环依赖: {name}")
+            if name not in self.plugins_meta:
+                return
 
             visiting.add(name)
             meta = self.plugins_meta[name]
             
             for dep_str in meta.dependencies:
-                # 提取纯名称用于递归 (去掉版本号)
-                dep_name = dep_str.split(">=")[0].strip()
+                # 提取纯名称用于递归
+                dep_match = re.match(r"^([a-zA-Z0-9_\-]+)", dep_str.strip())
+                if not dep_match:
+                    continue
+                dep_name = dep_match.group(1)
                 
-                # 在这里进行版本预检查
+                # 版本检查
                 if not self._check_dep_version(dep_str):
-                    raise Exception(f"插件 {name} 的依赖 {dep_str} 未满足")
+                    raise Exception(f"插件 {name} 的依赖未满足: {dep_str}")
                 
+                # 递归处理依赖
                 visit(dep_name)
                 
             visiting.remove(name)
             visited.add(name)
             ordered.append(name)
 
+        # 扫描所有已知插件
         for name in self.plugins_meta:
-            if not self.plugins_meta[name].active:
-                try: visit(name)
-                except Exception as e: print(f"[!] 依赖解析错误: {e}")
+            # 只有未激活的才需要排队，但为了计算依赖树，通常重新计算
+            try: 
+                visit(name)
+            except Exception as e: 
+                print(f"[Dep Error] 忽略插件 {name}: {e}")
+        
         return ordered
 
     def _scan_plugins(self) -> None:
-        if not os.path.exists(self.PLUGIN_DIR): return
+        """扫描目录并刷新元数据"""
+        if not os.path.exists(self.PLUGIN_DIR):
+            return
         
         for entry in os.listdir(self.PLUGIN_DIR):
             plugin_path = os.path.join(self.PLUGIN_DIR, entry)
@@ -249,205 +293,218 @@ class PluginKernel:
                     try:
                         with open(config_file, 'r', encoding='utf-8') as f:
                             config = json.load(f)
-                        name = config.get("name", entry)
-                        version = config.get("version", "0.0.0")
-                        deps = config.get("dependencies", [])
                         
-                        # [解决问题: 动态更新] 无论是否存在都更新元数据
+                        name = config.get("name", entry)
+                        # 保持现有状态 (如果已加载)
+                        existing = self.plugins_meta.get(name)
+                        
                         self.plugins_meta[name] = PluginMeta(
                             name=name, 
                             path=plugin_path, 
-                            version=version,
-                            dependencies=deps,
-                            active=self.plugins_meta.get(name, PluginMeta("", "")).active,
-                            instance=self.plugins_meta.get(name, PluginMeta("", "")).instance,
-                            api_instance=self.plugins_meta.get(name, PluginMeta("", "")).api_instance
+                            version=config.get("version", "0.0.0"),
+                            dependencies=config.get("dependencies", []),
+                            # 继承之前的运行状态
+                            active=existing.active if existing else False,
+                            instance=existing.instance if existing else None,
+                            api_instance=existing.api_instance if existing else None,
+                            module=existing.module if existing else None
                         )
                     except Exception as e:
-                        print(f"[Error] 读取配置 {entry} 失败: {e}")
+                        print(f"[Scan Error] 读取配置 {entry} 失败: {e}")
 
-    # --- [修改] 插件加载 (安全审计 + 超时) ---
+    # --- 插件加载核心 (包含超时控制) ---
 
     def load_plugin(self, name: str) -> bool:
         meta = self.plugins_meta.get(name)
-        if not meta: return False
-        if meta.active: return True
+        if not meta:
+            return False
+        if meta.active:
+            return True
 
-        # 1. [新增] 安全性静态审计
+        # 1. 安全审计
         init_path = os.path.join(meta.path, "__init__.py")
         if os.path.exists(init_path):
-            security_issues = scan_code_security(init_path)
-            if security_issues:
-                print(f"[Security Block] 拒绝加载插件 {name}，发现高危代码:")
-                for issue in security_issues:
-                    print(f"  - {issue}")
+            issues = scan_code_security(init_path)
+            if issues:
+                print(f"[Security Block] 插件 {name} 包含可疑代码，已拦截:")
+                for i in issues:
+                    print(f"  - {i}")
                 return False
 
         try:
-            unique_module_name = f"mk_plugin_{name}"
-            spec = importlib.util.spec_from_file_location(unique_module_name, init_path)
+            # 2. 动态导入
+            unique_mod_name = f"mk_plugin_{name}_{int(time.time())}" # 添加时间戳防止缓存污染
+            spec = importlib.util.spec_from_file_location(unique_mod_name, init_path)
             
             if spec and spec.loader:
                 mod = importlib.util.module_from_spec(spec)
-                sys.modules[unique_module_name] = mod
+                sys.modules[unique_mod_name] = mod
                 spec.loader.exec_module(mod)
-                meta.module = mod
                 
                 if hasattr(mod, "Plugin"):
+                    # 3. 注入 API
                     api = PluginAPI(self, name, meta.path)
                     meta.api_instance = api
-                    inst = mod.Plugin(api)
+                    meta.module = mod # 保存引用防止被GC
                     
-                    if isinstance(inst, IPlugin):
-                        # 2. [新增] 启动超时保护
-                        # 防止插件 start() 里的 sleep 或死循环阻塞主线程
-                        start_success = [False]
-                        start_error = [None]
-                        
-                        def _safe_start():
-                            try:
-                                inst.start()
-                                start_success[0] = True
-                            except Exception as e:
-                                start_error[0] = e
+                    inst = mod.Plugin(api)
+                    if not isinstance(inst, IPlugin):
+                        print(f"[Load Error] {name} 未继承 IPlugin")
+                        return False
 
-                        # 使用临时的 Daemon 线程加载
-                        t = threading.Thread(target=_safe_start, name=f"Loader-{name}", daemon=True)
-                        t.start()
-                        t.join(timeout=3.0) # 3秒超时
-                        
-                        if t.is_alive():
-                            print(f"[Timeout] 插件 {name} 启动超时 (>3s)，强制中止加载")
-                            # 注意：Python无法强杀线程，这个线程会泄露，但主进程不会卡死
-                            # 必须清理已创建的 API
-                            api._cleanup()
-                            return False
-                        
-                        if not start_success[0]:
-                            raise start_error[0] if start_error[0] else Exception("未知启动错误")
+                    # 4. 超时启动保护
+                    # 使用闭包变量来捕获结果
+                    result_container = {"success": False, "error": None}
+                    
+                    def _runner():
+                        try:
+                            inst.start()
+                            result_container["success"] = True
+                        except Exception as e:
+                            result_container["error"] = e
 
-                        meta.instance = inst
-                        meta.active = True
-                        print(f"[+] 启动成功: {name} (v{meta.version})")
-                        return True
+                    t = threading.Thread(target=_runner, name=f"Loader-{name}", daemon=True)
+                    t.start()
+                    t.join(timeout=3.0) # 设置3秒硬超时
+
+                    if t.is_alive():
+                        print(f"[Timeout] 插件 {name} 启动超时 (>3s)！")
+                        print(" -> 正在切断该插件的 API 连接...")
+                        # 强制清理 API，使插件内部后续调用失效
+                        api._cleanup() 
+                        return False
+                    
+                    if not result_container["success"]:
+                        raise result_container["error"] or Exception("启动未返回成功状态")
+
+                    meta.instance = inst
+                    meta.active = True
+                    print(f"[System] 插件已加载: {name} (v{meta.version})")
+                    return True
+            
+            print(f"[Load Error] {name} 模块格式无效")
             return False
+            
         except Exception as e:
             print(f"[FATAL] 加载崩溃 {name}: {e}")
             traceback.print_exc()
             return False
 
     def unload_plugin(self, name: str) -> None:
-        """卸载逻辑保持类似，增加容错"""
         meta = self.plugins_meta.get(name)
-        if not meta or not meta.active: return
+        if not meta or not meta.active:
+            return
 
-        print(f"[*] 正在卸载: {name}...")
+        print(f"[System] 正在卸载: {name}...")
         
-        # 停止也需要超时保护，防止 stop() 卡死
+        # 1. 调用 stop (带超时保护)
         if meta.instance:
             try:
-                t = threading.Thread(target=meta.instance.stop, name=f"Unloader-{name}", daemon=True)
+                def _stopper():
+                    meta.instance.stop()
+                
+                t = threading.Thread(target=_stopper, name=f"Unloader-{name}", daemon=True)
                 t.start()
                 t.join(timeout=2.0)
+                
                 if t.is_alive():
-                    print(f"[Warn] 插件 {name} 停止超时，强制清理资源")
+                    print(f"[Warn] 插件 {name} 停止方法超时，强制清理资源")
             except Exception as e:
-                print(f"[!] Stop异常: {e}")
+                print(f"[Error] 插件停止时异常: {e}")
 
+        # 2. 清理 API 资源 (关闭后台线程，注销事件)
         if meta.api_instance:
             meta.api_instance._cleanup()
 
+        # 3. 内核层清理
         self.unregister_events_by_owner(name)
         
         with self._lock:
             if name in self.context_local:
                 del self.context_local[name]
 
-        unique_module_name = f"mk_plugin_{name}"
-        if unique_module_name in sys.modules:
-            del sys.modules[unique_module_name]
-        
+        # 4. 清理 Python 模块缓存
+        # 尝试查找并删除 sys.modules 中的相关项
+        keys_to_del = [k for k in sys.modules if f"mk_plugin_{name}" in k]
+        for k in keys_to_del:
+            del sys.modules[k]
+
+        # 5. 重置元数据
         meta.instance = None
         meta.module = None
         meta.api_instance = None
         meta.active = False
-        gc.collect()
-        print(f"[-] 卸载完成: {name}")
-
-    # --- 辅助方法 ---
-    # reload_plugin, _get_dependent_tree 等逻辑复用旧代码...
-    # 为节省篇幅，此处省略 reload_plugin/shutdown/init_system 的重复代码
-    # 实际使用时请保留原有的这些方法
-
-    def reload_plugin(self, name: str) -> None:
-        # (保持原有逻辑，调用 unload 和 load)
-        if name not in self.plugins_meta: return
-        dependents = self._get_dependent_tree(name)
-        for dep in reversed(dependents): self.unload_plugin(dep)
-        self.unload_plugin(name)
-        self._scan_plugins() # 重新扫描配置
-        if self.load_plugin(name):
-            for dep in dependents: self.load_plugin(dep)
-
-    def _get_dependent_tree(self, target: str) -> List[str]:
-        # (保持原有逻辑)
-        # 注意 dependencies 列表现在包含版本号，需要清洗
-        rev_graph = {}
-        for name, meta in self.plugins_meta.items():
-            for dep_str in meta.dependencies:
-                dep_name = dep_str.split(">=")[0].strip()
-                if dep_name not in rev_graph: rev_graph[dep_name] = []
-                rev_graph[dep_name].append(name)
         
-        queue = [target]
-        visited = {target}
-        dependents = []
-        while queue:
-            curr = queue.pop(0)
-            if curr in rev_graph:
-                for child in rev_graph[curr]:
-                    if child not in visited:
-                        visited.add(child)
-                        queue.append(child)
-                        dependents.append(child)
-        
-        # 简单拓扑排序，忽略版本校验，仅用于重载顺序
-        # 实际生产中应复用 _resolve_dependencies
-        return dependents
+        gc.collect() # 强制垃圾回收
+        print(f"[System] 卸载完成: {name}")
 
     def init_system(self) -> None:
+        print("[System] 初始化微内核...")
         self._scan_plugins()
-        order = self._resolve_dependencies()
-        for name in order:
-            self.load_plugin(name)
+        try:
+            load_order = self._resolve_dependencies()
+            print(f"[System] 解析加载顺序: {load_order}")
+            for name in load_order:
+                self.load_plugin(name)
+        except Exception as e:
+            print(f"[System Error] 初始化失败: {e}")
 
     def shutdown(self):
-        print("\n[*] 系统正在关闭...")
-        # 逆序停止
-        active = [p for p, m in self.plugins_meta.items() if m.active]
-        for name in reversed(active):
+        print("\n[System] 系统正在关闭...")
+        # 逆序卸载，保证依赖者先退出
+        active_plugins = [p for p, m in self.plugins_meta.items() if m.active]
+        # 简单逆序，更严格的做法是重新计算反向依赖图
+        for name in reversed(active_plugins):
             self.unload_plugin(name)
+        
         self._executor.shutdown(wait=False)
+        print("[System] Bye.")
 
 if __name__ == "__main__":
     k = PluginKernel()
     k.init_system()
     
-    # 简单的命令行交互
+    # CLI 交互
     while True:
         try:
-            raw = input("\nKernel> ").strip().split()
-            if not raw: continue
-            cmd = raw[0].lower()
+            raw = input("\nKernel> ").strip()
+            if not raw:
+                continue
+            parts = raw.split()
+            cmd = parts[0].lower()
+            
             if cmd == "exit":
                 k.shutdown()
                 break
             elif cmd == "list":
+                print(f"{'Name':<20} {'Version':<10} {'Status':<10}")
+                print("-" * 45)
                 for n, m in k.plugins_meta.items():
-                    print(f" - {n} (v{m.version}): {'RUNNING' if m.active else 'STOPPED'}")
+                    status = "ACTIVE" if m.active else "STOPPED"
+                    print(f"{n:<20} {m.version:<10} {status:<10}")
+            elif cmd == "reload":
+                if len(parts) > 1:
+                    target = parts[1]
+                    k.unload_plugin(target)
+                    k._scan_plugins()
+                    k.load_plugin(target)
             elif cmd == "emit":
-                if len(raw) > 1:
-                    print(k.sync_call_event(raw[1]))
+                # 测试命令: emit test_event key=val
+                if len(parts) > 1:
+                    evt = parts[1]
+                    kwargs = {}
+                    for pair in parts[2:]:
+                        if '=' in pair:
+                            k, v = pair.split('=', 1)
+                            kwargs[k] = v
+                    print(f"Calling sync event: {evt}")
+                    res = k.sync_call_event(evt, **kwargs)
+                    print(f"Result: {res}")
+            else:
+                print("Unknown command. Try: list, reload <name>, emit <event>, exit")
+                
         except KeyboardInterrupt:
             k.shutdown()
             break
+        except Exception as e:
+            print(f"CLI Error: {e}")
