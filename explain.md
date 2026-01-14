@@ -52,7 +52,8 @@ import os
 import json
 import threading
 import weakref
-from typing import Any, Callable, Dict, List, Optional
+import concurrent.futures
+from typing import Any, Callable, Dict, List, Optional, Union
 
 if False:
     from kernel import PluginKernel
@@ -60,21 +61,30 @@ if False:
 class PluginAPI:
     """
     改进后的插件沙箱 API
-    特点：线程安全代理、生命周期资源托管、弱引用内核
+    解决问题：
+    1. 僵尸线程：引入 StopEvent 信号机制
+    2. 事件反馈：支持同步调用 (call) 和 异步Future (emit)
     """
     def __init__(self, kernel: 'PluginKernel', plugin_name: str, plugin_dir: str) -> None:
-        # [解决 C: 沙箱逃逸] 使用弱引用，防止强引用循环，并使用私有属性名增加访问难度
         self.__kernel_ref = weakref.ref(kernel)
         self._plugin_name = plugin_name
         self._plugin_dir = plugin_dir
         
-        # [解决 D: 异常隔离] 追踪插件创建的资源
+        # [解决 D] 资源追踪
         self._registered_events: List[str] = []
         self._managed_threads: List[threading.Thread] = []
+        
+        # [解决: 僵尸线程] 全局停止信号
+        # 插件内的循环线程应当在每次迭代检查 self.api.is_active
+        self._stop_event = threading.Event()
+
+    @property
+    def is_active(self) -> bool:
+        """[新增] 插件是否处于活跃状态，用于线程循环判断退出条件"""
+        return not self._stop_event.is_set()
 
     @property
     def _kernel(self) -> 'PluginKernel':
-        """内部辅助方法：安全获取内核实例"""
         k = self.__kernel_ref()
         if k is None:
             raise RuntimeError("内核实例已销毁，插件API失效")
@@ -95,13 +105,18 @@ class PluginAPI:
                 self.log(f"读取配置失败: {e}")
         return {}
 
-    # --- 资源托管 (解决 D) ---
+    # --- 资源托管 (解决: 僵尸线程) ---
 
     def spawn_task(self, target: Callable, args: tuple = (), daemon: bool = True) -> None:
         """
-        [推荐] 使用此方法启动线程，而非 threading.Thread
-        内核可在卸载插件时追踪并清理这些线程。
+        启动托管线程。
+        注意：target 函数内部必须在循环中检查 `if not api.is_active: break`，
+        否则无法在卸载时优雅退出。
         """
+        if self._stop_event.is_set():
+            self.log("错误: 插件已停止，无法启动新任务")
+            return
+
         t = threading.Thread(target=target, args=args, name=f"{self._plugin_name}-Worker")
         t.daemon = daemon
         t.start()
@@ -109,25 +124,44 @@ class PluginAPI:
     
     def _cleanup(self) -> None:
         """[内核调用] 卸载时清理资源"""
-        # 1. 等待非守护线程结束（可选逻辑，这里简单演示）
-        # 2. 清理内部状态
+        self.log("正在清理资源...")
+        
+        # 1. 发出停止信号
+        self._stop_event.set()
+        
+        # 2. 等待线程结束 (加入超时机制，防止死锁)
         active_threads = [t for t in self._managed_threads if t.is_alive()]
         if active_threads:
-            self.log(f"警告: 卸载时仍有 {len(active_threads)} 个活跃线程")
-            # 实际生产中可能需要设置 Event 标志位通知线程退出
+            self.log(f"等待 {len(active_threads)} 个线程退出...")
+            for t in active_threads:
+                # 给予每个线程 1秒 的宽限期进行收尾
+                t.join(timeout=1.0)
+                if t.is_alive():
+                    self.log(f"警告: 线程 {t.name} 未能响应停止信号 (可能处于死循环或IO阻塞)")
+        
         self._managed_threads.clear()
 
-    # --- 事件系统 ---
+    # --- 事件系统 (解决: Fire-and-Forget) ---
     
     def on(self, event_name: str, callback: Callable[..., Any]) -> None:
-        # 调用内核的线程安全方法
         self._kernel.thread_safe_register_event(event_name, callback, owner=self._plugin_name)
         self._registered_events.append(event_name)
         
-    def emit(self, event_name: str, **kwargs: Any) -> None:
-        self._kernel.emit(event_name, **kwargs)
+    def emit(self, event_name: str, **kwargs: Any) -> List[concurrent.futures.Future]:
+        """
+        [修改] 异步分发事件，返回 Future 列表。
+        可以通过 futures[i].result() 获取返回值或捕获异常。
+        """
+        return self._kernel.emit(event_name, **kwargs)
 
-    # --- 数据中心 (解决 A: 线程安全委托) ---
+    def call(self, event_name: str, timeout: float = 5.0, **kwargs: Any) -> List[Any]:
+        """
+        [新增] 同步调用事件。
+        阻塞直到所有监听者执行完毕，并返回结果列表。
+        """
+        return self._kernel.sync_call_event(event_name, timeout=timeout, **kwargs)
+
+    # --- 数据中心 ---
 
     def get_data(self, key: str, scope: str = 'global', default: Any = None) -> Any:
         return self._kernel.thread_safe_get_data(self._plugin_name, key, scope, default)
@@ -143,11 +177,12 @@ class PluginAPI:
 import os
 import sys
 import json
+import gc
 import importlib
 import importlib.util
 import traceback
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, Future, wait, ALL_COMPLETED
 from dataclasses import dataclass
 from typing import Dict, List, Any, Callable, Optional, Set
 
@@ -161,18 +196,17 @@ class PluginMeta:
     dependencies: List[str]
     module: Any = None
     instance: Optional[IPlugin] = None
-    api_instance: Optional[PluginAPI] = None  # 新增：持有API实例以便清理
+    api_instance: Optional[PluginAPI] = None
     active: bool = False
 
 class PluginKernel:
     def __init__(self) -> None:
         self.PLUGIN_DIR = "plugins"
         
-        # [解决 A: 线程安全] 引入可重入锁
         self._lock = threading.RLock()
         
         self.context_global: Dict[str, Any] = {
-            "version": "3.1 Secure",
+            "version": "3.2 Enhanced",
             "admin": "Administrator"
         }
         self.context_local: Dict[str, Dict[str, Any]] = {}
@@ -184,7 +218,7 @@ class PluginKernel:
         if not os.path.exists(self.PLUGIN_DIR):
             os.makedirs(self.PLUGIN_DIR)
 
-    # --- [解决 A] 线程安全的数据访问接口 ---
+    # --- 线程安全的数据访问接口 ---
 
     def thread_safe_get_data(self, caller: str, key: str, scope: str, default: Any) -> Any:
         with self._lock:
@@ -212,7 +246,7 @@ class PluginKernel:
                 self._events[event_name] = []
             self._events[event_name].append((callback, owner))
 
-    # --- 事件系统 ---
+    # --- [修改] 事件系统 (支持同步/异步反馈) ---
 
     def unregister_events_by_owner(self, owner: str) -> None:
         with self._lock:
@@ -221,26 +255,56 @@ class PluginKernel:
                     (cb, o) for cb, o in self._events[name] if o != owner
                 ]
             
-    def emit(self, event_name: str, **kwargs: Any) -> None:
-        # 获取回调列表快照，避免在迭代时被修改
+    def emit(self, event_name: str, **kwargs: Any) -> List[Future]:
+        """
+        [修改] 返回 Future 列表，允许调用者追踪执行状态
+        """
         callbacks_snapshot = []
         with self._lock:
             if event_name in self._events:
-                callbacks_snapshot = self._events[event_name][:] # Copy
+                callbacks_snapshot = self._events[event_name][:]
         
+        futures = []
         for func, owner in callbacks_snapshot:
-            self._executor.submit(self._safe_event_call, func, event_name, owner, **kwargs)
+            # 提交任务并保留 Future
+            f = self._executor.submit(self._safe_event_call, func, event_name, owner, **kwargs)
+            futures.append(f)
+        return futures
 
-    def _safe_event_call(self, func: Callable, event_name: str, owner: str, **kwargs) -> None:
+    def sync_call_event(self, event_name: str, timeout: float = 5.0, **kwargs) -> List[Any]:
+        """
+        [新增] 同步等待所有事件处理器完成，并返回结果列表
+        """
+        futures = self.emit(event_name, **kwargs)
+        if not futures:
+            return []
+            
+        # 阻塞等待所有任务完成
+        done, not_done = wait(futures, timeout=timeout, return_when=ALL_COMPLETED)
+        
+        results = []
+        for f in done:
+            try:
+                results.append(f.result())
+            except Exception as e:
+                results.append(e) # 或者记录错误
+        
+        if not_done:
+            print(f"[Warn] 事件 {event_name} 同步调用超时，{len(not_done)} 个任务未完成")
+            
+        return results
+
+    def _safe_event_call(self, func: Callable, event_name: str, owner: str, **kwargs) -> Any:
+        """执行实际回调并返回结果"""
         try:
-            func(**kwargs)
+            return func(**kwargs)
         except Exception as e:
             print(f"[!] 事件执行异常 [{owner}] -> {event_name}: {e}")
+            raise e # 重新抛出，以便 Future 捕获
 
-    # --- 依赖计算与拓扑 ---
+    # --- 依赖计算与拓扑 (保持原样) ---
 
     def _scan_plugins(self) -> None:
-        # 扫描逻辑保持不变，但为了演示完整性，确保每次重新扫描
         if not os.path.exists(self.PLUGIN_DIR): return
         
         for entry in os.listdir(self.PLUGIN_DIR):
@@ -253,7 +317,6 @@ class PluginKernel:
                             config = json.load(f)
                         name = config.get("name", entry)
                         
-                        # 更新或新增元数据
                         if name not in self.plugins_meta:
                             self.plugins_meta[name] = PluginMeta(
                                 name=name, 
@@ -261,14 +324,12 @@ class PluginKernel:
                                 dependencies=config.get("dependencies", [])
                             )
                         else:
-                            # 重新扫描时更新依赖配置
                             self.plugins_meta[name].dependencies = config.get("dependencies", [])
                             self.plugins_meta[name].path = plugin_path
                     except Exception:
                         pass
 
     def _resolve_dependencies(self) -> List[str]:
-        """计算完整的启动顺序（拓扑排序）"""
         ordered = []
         visited = set()
         visiting = set()
@@ -276,7 +337,7 @@ class PluginKernel:
         def visit(name: str):
             if name in visited: return
             if name in visiting: raise Exception(f"循环依赖: {name}")
-            if name not in self.plugins_meta: return # 容错：忽略不存在的依赖
+            if name not in self.plugins_meta: return
 
             visiting.add(name)
             for dep in self.plugins_meta[name].dependencies:
@@ -292,23 +353,15 @@ class PluginKernel:
         return ordered
 
     def _get_dependent_tree(self, target_plugin: str) -> List[str]:
-        """
-        [解决 B: 级联重载] 计算反向依赖树
-        返回所有依赖于 target_plugin 的插件列表（按依赖层级排序）
-        例如：A 被 B 依赖，B 被 C 依赖。输入 A，返回 [B, C]
-        """
         dependents = []
-        # 构建反向图： { "core": ["security"], ... }
         rev_graph: Dict[str, List[str]] = {}
         for name, meta in self.plugins_meta.items():
             for dep in meta.dependencies:
                 if dep not in rev_graph: rev_graph[dep] = []
                 rev_graph[dep].append(name)
         
-        # BFS 查找所有受影响节点
         queue = [target_plugin]
         visited = {target_plugin}
-        
         while queue:
             current = queue.pop(0)
             if current in rev_graph:
@@ -318,14 +371,8 @@ class PluginKernel:
                         queue.append(child)
                         dependents.append(child)
         
-        # 对受影响的节点进行拓扑排序，确保卸载顺序正确
-        # 这里简化处理：只要按照依赖顺序的逆序即可
-        # 使用现有的 _resolve_dependencies 逻辑对 dependents 重新排序
-        full_order = self._resolve_dependencies() # 这是一个 [Base, ..., Leaf] 的列表
-        
-        # 过滤出 dependents 并保持 full_order 中的顺序
+        full_order = self._resolve_dependencies()
         sorted_dependents = [p for p in full_order if p in dependents]
-        
         return sorted_dependents
 
     # --- 插件生命周期 ---
@@ -336,6 +383,7 @@ class PluginKernel:
         if meta.active: return True
 
         try:
+            # 保持使用 unique_module_name 进行隔离
             unique_module_name = f"mk_plugin_{name}"
             init_path = os.path.join(meta.path, "__init__.py")
             spec = importlib.util.spec_from_file_location(unique_module_name, init_path)
@@ -347,9 +395,8 @@ class PluginKernel:
                 meta.module = mod
                 
                 if hasattr(mod, "Plugin"):
-                    # 传入 Kernel 实例，API 内部会弱引用
                     api = PluginAPI(self, name, meta.path)
-                    meta.api_instance = api # 保存 API 引用以便清理
+                    meta.api_instance = api
                     
                     inst = mod.Plugin(api)
                     if isinstance(inst, IPlugin):
@@ -365,80 +412,77 @@ class PluginKernel:
             return False
 
     def unload_plugin(self, name: str) -> None:
+        """
+        [修改] 卸载流程增加了深度清理和 GC
+        """
         meta = self.plugins_meta.get(name)
         if not meta or not meta.active: return
 
         print(f"[*] 正在卸载: {name}...")
         
-        # 1. 停止插件
+        # 1. 逻辑停止
         try:
             if meta.instance:
                 meta.instance.stop()
         except Exception as e:
             print(f"[!] Stop异常: {e}")
 
-        # 2. [解决 D] 清理 API 托管的资源 (线程等)
+        # 2. 清理资源 (StopEvent 触发, 等待线程)
         if meta.api_instance:
             meta.api_instance._cleanup()
 
-        # 3. 清理事件监听 (加锁操作)
+        # 3. 清理事件
         self.unregister_events_by_owner(name)
         
-        # 4. 清理 Local Storage (加锁操作)
+        # 4. 清理数据
         with self._lock:
             if name in self.context_local:
                 del self.context_local[name]
 
-        # 5. 移除 sys.modules
+        # 5. [解决 C: 深度清理] 移除模块引用
         unique_module_name = f"mk_plugin_{name}"
         if unique_module_name in sys.modules:
             del sys.modules[unique_module_name]
-            
-        # 6. 重置元数据
-        meta.active = False
+        
+        # 解除所有引用
         meta.instance = None
         meta.module = None
-        meta.api_instance = None
-        print(f"[-] 卸载完成: {name}")
+        meta.api_instance = None # 这一步很关键，断开 API 对 Kernel 的弱引用持有者
+        meta.active = False
+        
+        # 6. [新增] 强制垃圾回收
+        # 这一步是为了解决 Python 的循环引用问题 (Plugin <-> API <-> Kernel)
+        # 虽然使用了 weakref，但闭包、traceback 等仍可能造成循环引用
+        gc.collect()
+        
+        print(f"[-] 卸载完成: {name} (GC Collected)")
 
     def reload_plugin(self, name: str) -> None:
-        """
-        [解决 B: 级联重载] 智能重载
-        流程：
-        1. 找到所有依赖此插件的上层插件 (Dependents)
-        2. 按依赖树逆序（先叶子节点）卸载所有受影响插件
-        3. 卸载并重载目标插件
-        4. 按依赖树正序（先基础节点）重新加载所有受影响插件
-        """
         if name not in self.plugins_meta:
             print(f"[!] 未知插件: {name}")
             return
 
         print(f"\n[Refactor] 准备级联重载: {name}")
         
-        # 1. 计算受影响的插件
         dependents = self._get_dependent_tree(name)
         if dependents:
             print(f"[*] 检测到依赖链: {name} <- {', '.join(dependents)}")
         
-        # 2. 逆序卸载 (先卸载 Security, 再卸载 Core)
-        # dependents 已经是按 [Base -> Leaf] 排序，所以卸载要反过来
+        # 逆序卸载
         for dep_name in reversed(dependents):
             self.unload_plugin(dep_name)
             
-        # 3. 卸载目标
         self.unload_plugin(name)
         
-        # --- 刷新元数据 ---
+        # 刷新并重新加载
         self._scan_plugins()
         
-        # 4. 重载目标
         if self.load_plugin(name):
-            # 5. 正序恢复依赖者
+            # 正序恢复
             for dep_name in dependents:
                 print(f"[*] 正在恢复依赖插件: {dep_name}")
                 if not self.load_plugin(dep_name):
-                    print(f"[!] 恢复失败: {dep_name} (可能因 API 变更导致不兼容)")
+                    print(f"[!] 恢复失败: {dep_name}")
         else:
             print(f"[!] 核心插件 {name} 重载失败，依赖链恢复中止。")
 
@@ -451,8 +495,6 @@ class PluginKernel:
     def shutdown(self):
         print("\n[*] 系统正在关闭...")
         active_plugins = [p for p, m in self.plugins_meta.items() if m.active]
-        # 依赖树逆序关闭
-        # 简单逆转 active_plugins 可能不准确，最好根据拓扑序逆转
         topo_order = self._resolve_dependencies()
         shutdown_order = [p for p in reversed(topo_order) if p in active_plugins]
         
@@ -460,7 +502,6 @@ class PluginKernel:
             self.unload_plugin(name)
         self._executor.shutdown(wait=False)
 
-# --- 主程序 ---
 if __name__ == "__main__":
     kernel = PluginKernel()
     kernel.init_system()
@@ -483,17 +524,17 @@ if __name__ == "__main__":
                     kernel.reload_plugin(raw[1])
                 else:
                     print("Usage: reload <plugin_name>")
-            elif cmd == "data":
-                # 调试打印，不需要锁（只读 snapshot 即可，或者稍微不一致也没事）
-                print("Global:", json.dumps(kernel.context_global, indent=2))
-                print("Local:", json.dumps(kernel.context_local, indent=2, default=str))
             elif cmd == "emit":
+                # 测试同步调用
                 if len(raw) > 1:
-                    kernel.emit(raw[1], msg="Manual trigger")
-                    print("事件已分发")
+                    print("触发事件 (Wait)...")
+                    # 使用新的 call 接口
+                    results = kernel.sync_call_event(raw[1], msg="Manual trigger")
+                    print(f"事件返回结果: {results}")
         except KeyboardInterrupt:
             kernel.shutdown()
             break
+
 ```
 
 ---
