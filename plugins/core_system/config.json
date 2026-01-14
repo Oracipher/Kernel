@@ -1,5 +1,6 @@
 {
     "name": "core_system",
-    "version": "1.0.0",
-    "dependencies": []
+    "version": "1.0.1",
+    "dependencies": [],
+    "description": "基础核心服务，提供版本号供检测"
 }
