@@ -5,187 +5,270 @@ import json
 import importlib
 import importlib.util
 import traceback
-from typing import Dict, List, Any, Callable, Set
-from dataclasses import dataclass
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from typing import Dict, List, Any, Callable, Set, Optional
 
 from interface import IPlugin
 from api import PluginAPI
 
-# 定义一个数据类来保存插件元数据
 @dataclass
 class PluginMeta:
     name: str
     path: str
     dependencies: List[str]
     module: Any = None
-    instance: Any = None
+    instance: Optional[IPlugin] = None
+    active: bool = False
 
 class PluginKernel:
     def __init__(self) -> None:
         self.PLUGIN_DIR = "plugins"
-        self.context: Dict[str, Any] = {
-            "version": "2.0 Pro",
-            "admin": "Administrator",
-            "data": []
+        
+        # 改进：分离全局上下文和局部上下文
+        self.context_global: Dict[str, Any] = {
+            "version": "3.0 Ultra",
+            "admin": "Administrator"
         }
-        # 存储插件元数据：name -> PluginMeta
+        self.context_local: Dict[str, Dict[str, Any]] = {}
+        
         self.plugins_meta: Dict[str, PluginMeta] = {}
-        self._events: Dict[str, List[Callable]] = {}
+        
+        # 改进：事件字典结构 {event_name: [(callback, owner_plugin_name)]}
+        self._events: Dict[str, List[tuple]] = {}
+        
+        # 改进：引入线程池处理事件
+        self._executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="EventWorker")
         
         if not os.path.exists(self.PLUGIN_DIR):
             os.makedirs(self.PLUGIN_DIR)
-    
-    # --- 事件系统 ---
-    def on(self, event_name: str, callback_func: Callable[..., Any]) -> None:
+
+    # --- 增强的事件系统 ---
+
+    def register_event(self, event_name: str, callback: Callable, owner: str) -> None:
         if event_name not in self._events:
             self._events[event_name] = []
-        self._events[event_name].append(callback_func)
-        
-    def emit(self, event_name: str, **kwargs: Any) -> None:
-        if event_name in self._events:
-            for func in self._events[event_name]:
-                try:
-                    func(**kwargs)
-                except Exception as e:
-                    print(f"[!] 事件异常 ({event_name}): {e}")
-                    traceback.print_exc()
+        self._events[event_name].append((callback, owner))
 
-    # --- 核心依赖与加载逻辑 ---
+    def unregister_events_by_owner(self, owner: str) -> None:
+        """卸载插件时，清理其注册的所有事件回调"""
+        for name in list(self._events.keys()):
+            # 过滤掉属于该 owner 的回调
+            self._events[name] = [
+                (cb, o) for cb, o in self._events[name] if o != owner
+            ]
+            
+    def emit(self, event_name: str, **kwargs: Any) -> None:
+        """非阻塞事件分发"""
+        if event_name in self._events:
+            for func, owner in self._events[event_name]:
+                # 提交到线程池执行
+                self._executor.submit(self._safe_event_call, func, event_name, owner, **kwargs)
+
+    def _safe_event_call(self, func: Callable, event_name: str, owner: str, **kwargs) -> None:
+        try:
+            func(**kwargs)
+        except Exception as e:
+            print(f"[!] 事件执行异常 [{owner}] -> {event_name}: {e}")
+
+    # --- 核心生命周期管理 ---
 
     def _scan_plugins(self) -> None:
-        """第一步：扫描目录，读取 config.json，构建元数据"""
-        print("[*] 正在扫描插件目录...")
-        self.plugins_meta.clear()
+        # (保持原逻辑，略作简化)
+        # 实际生产中这里应该只扫描新发现的插件，避免覆盖已加载的元数据
+        if not self.plugins_meta: 
+            print("[*] 正在扫描插件目录...")
         
         for entry in os.listdir(self.PLUGIN_DIR):
             plugin_path = os.path.join(self.PLUGIN_DIR, entry)
-            # 只处理文件夹
             if os.path.isdir(plugin_path):
                 config_file = os.path.join(plugin_path, "config.json")
-                init_file = os.path.join(plugin_path, "__init__.py")
-                
-                if os.path.exists(config_file) and os.path.exists(init_file):
+                if os.path.exists(config_file):
                     try:
                         with open(config_file, 'r', encoding='utf-8') as f:
                             config = json.load(f)
-                            
                         name = config.get("name", entry)
-                        deps = config.get("dependencies", [])
                         
-                        meta = PluginMeta(name=name, path=plugin_path, dependencies=deps)
-                        self.plugins_meta[name] = meta
-                        print(f"    - 发现插件: {name} (依赖: {deps})")
-                    except Exception as e:
-                        print(f"[!] 无法读取插件配置 {entry}: {e}")
+                        # 只有未加载时才添加元数据
+                        if name not in self.plugins_meta:
+                            meta = PluginMeta(
+                                name=name, 
+                                path=plugin_path, 
+                                dependencies=config.get("dependencies", [])
+                            )
+                            self.plugins_meta[name] = meta
+                    except Exception:
+                        pass
 
     def _resolve_dependencies(self) -> List[str]:
-        """第二步：计算拓扑排序，返回正确的加载顺序列表"""
-        # 结果列表
-        ordered: List[str] = []
-        # 访问状态：set 用于记录已处理的节点
-        visited: Set[str] = set()
-        # 正在访问：用于检测循环依赖
-        visiting: Set[str] = set()
+        # (保持原逻辑，拓扑排序)
+        ordered = []
+        visited = set()
+        visiting = set()
 
         def visit(name: str):
-            if name in visited:
-                return
-            if name in visiting:
-                raise Exception(f"检测到循环依赖: {name}")
-            
-            if name not in self.plugins_meta:
-                raise Exception(f"缺失依赖插件: {name}")
+            if name in visited: return
+            if name in visiting: raise Exception(f"循环依赖: {name}")
+            if name not in self.plugins_meta: raise Exception(f"缺失依赖: {name}")
 
             visiting.add(name)
-            
-            # 先递归加载依赖项
             for dep in self.plugins_meta[name].dependencies:
                 visit(dep)
-            
             visiting.remove(name)
             visited.add(name)
             ordered.append(name)
 
-        # 遍历所有发现的插件
         for name in self.plugins_meta:
-            try:
-                visit(name)
-            except Exception as e:
-                print(f"[!] 依赖解析错误: {e}")
-                # 可以在这里决定是否跳过该插件，或者直接终止
-                
+            if not self.plugins_meta[name].active: # 只计算未激活的或重新计算
+                try:
+                    visit(name)
+                except Exception as e:
+                    print(f"[!] 依赖错误 {name}: {e}")
         return ordered
 
-    def _load_and_start_plugin(self, name: str) -> None:
-        """第三步：实际加载并启动单个插件"""
+    def load_plugin(self, name: str) -> bool:
+        """加载并启动插件（增强版）"""
         meta = self.plugins_meta.get(name)
         if not meta:
-            return
+            print(f"[!] 插件元数据不存在: {name}")
+            return False
+        
+        if meta.active:
+            print(f"[-] 插件已运行: {name}")
+            return True
 
+        print(f"[*] 正在加载: {name}...")
         try:
-            # 1. 动态加载包 (Package)
-            spec = importlib.util.spec_from_file_location(name, os.path.join(meta.path, "__init__.py"))
+            # 改进1: 防止污染 sys.modules，添加前缀
+            unique_module_name = f"mk_plugin_{name}"
+            
+            init_path = os.path.join(meta.path, "__init__.py")
+            spec = importlib.util.spec_from_file_location(unique_module_name, init_path)
+            
             if spec and spec.loader:
                 mod = importlib.util.module_from_spec(spec)
-                sys.modules[name] = mod # 注册到 sys.modules
+                sys.modules[unique_module_name] = mod # 注册唯一名称
                 spec.loader.exec_module(mod)
                 meta.module = mod
                 
-                # 2. 检查是否有 Plugin 类
                 if hasattr(mod, "Plugin"):
-                    # 注入 API，注意现在传入了 plugin_dir
                     api = PluginAPI(self, name, meta.path)
-                    plugin_inst = mod.Plugin(api)
+                    inst = mod.Plugin(api)
                     
-                    if isinstance(plugin_inst, IPlugin):
-                        meta.instance = plugin_inst
-                        plugin_inst.start()
-                        print(f"[+] 插件启动成功: {name}")
+                    if isinstance(inst, IPlugin):
+                        # 改进2: 容错启动
+                        try:
+                            inst.start()
+                            meta.instance = inst
+                            meta.active = True
+                            print(f"[+] 启动成功: {name}")
+                            return True
+                        except Exception as e:
+                            print(f"[!] {name}.start() 抛出异常: {e}")
+                            print("    -> 正在回滚...")
+                            try: inst.stop() 
+                            except: pass
+                            return False
                     else:
-                        print(f"[!] 错误: {name} 未继承 IPlugin")
+                        print(f"[!] 错误: Plugin 类未继承 IPlugin")
                 else:
-                    print(f"[!] 错误: {name} 中未找到 Plugin 类")
-            else:
-                print(f"[!] 无法加载模块 spec: {name}")
-
-        except Exception as e:
-            print(f"[!] 加载插件 {name} 失败: {e}")
-            traceback.print_exc()
-
-    def init_plugins(self) -> None:
-        """系统初始化流程"""
-        # 1. 扫描
-        self._scan_plugins()
-        
-        # 2. 排序
-        try:
-            load_order = self._resolve_dependencies()
-            print(f"[*] 计算出的加载顺序: {load_order}\n")
+                    print(f"[!] 错误: 未找到 Plugin 类")
+            return False
             
-            # 3. 按顺序加载
-            for name in load_order:
-                self._load_and_start_plugin(name)
-                
         except Exception as e:
-            print(f"[FATAL] 初始化插件系统失败: {e}")
+            print(f"[FATAL] 加载过程崩溃 {name}: {e}")
+            traceback.print_exc()
+            return False
 
-    def list_plugins(self) -> List[str]:
-        return [name for name, meta in self.plugins_meta.items() if meta.instance is not None]
+    def unload_plugin(self, name: str) -> None:
+        """新增：卸载插件"""
+        meta = self.plugins_meta.get(name)
+        if not meta or not meta.active:
+            print(f"[-] 插件未运行或不存在: {name}")
+            return
+
+        print(f"[*] 正在卸载: {name}...")
+        
+        # 1. 停止插件
+        try:
+            if meta.instance:
+                meta.instance.stop()
+        except Exception as e:
+            print(f"[!] 停止插件出错: {e}")
+
+        # 2. 清理事件监听
+        self.unregister_events_by_owner(name)
+        
+        # 3. 清理上下文数据 (Local scope)
+        if name in self.context_local:
+            del self.context_local[name]
+
+        # 4. 移除 sys.modules (允许文件修改后重载生效)
+        unique_module_name = f"mk_plugin_{name}"
+        if unique_module_name in sys.modules:
+            del sys.modules[unique_module_name]
+            
+        # 5. 重置元数据
+        meta.active = False
+        meta.instance = None
+        meta.module = None
+        print(f"[-] 卸载完成: {name}")
+
+    def reload_plugin(self, name: str) -> None:
+        """新增：热重载"""
+        self.unload_plugin(name)
+        # 简单的重载逻辑：重新读取配置并加载
+        # 注意：这里未处理反向依赖（如果 Core 重载，依赖它的 Security 也应该重启）
+        # 生产环境需要递归卸载依赖树，这里演示单体重载
+        self._scan_plugins() 
+        self.load_plugin(name)
+
+    def init_system(self) -> None:
+        self._scan_plugins()
+        order = self._resolve_dependencies()
+        for name in order:
+            self.load_plugin(name)
+
+    def shutdown(self):
+        print("\n[*] 系统正在关闭...")
+        # 逆序停止
+        active_plugins = [p for p, m in self.plugins_meta.items() if m.active]
+        for name in reversed(active_plugins):
+            self.unload_plugin(name)
+        self._executor.shutdown(wait=False)
 
 # --- 主程序 ---
 if __name__ == "__main__":
     kernel = PluginKernel()
-    kernel.init_plugins()
+    kernel.init_system()
     
-    # 简单的交互循环
     while True:
         try:
-            cmd = input("\nKernel> ").strip().lower()
+            raw = input("\nKernel> ").strip().split()
+            if not raw: continue
+            cmd = raw[0].lower()
+            
             if cmd == "exit":
+                kernel.shutdown()
                 break
             elif cmd == "list":
-                print(f"已运行插件: {kernel.list_plugins()}")
+                for name, meta in kernel.plugins_meta.items():
+                    status = "RUNNING" if meta.active else "STOPPED"
+                    print(f" - {name}: {status}")
+            elif cmd == "reload":
+                if len(raw) > 1:
+                    kernel.reload_plugin(raw[1])
+                else:
+                    print("Usage: reload <plugin_name>")
             elif cmd == "data":
-                print(json.dumps(kernel.context, indent=2, ensure_ascii=False))
+                print("Global:", json.dumps(kernel.context_global, indent=2))
+                print("Local:", json.dumps(kernel.context_local, indent=2, default=str))
+            elif cmd == "emit":
+                # 测试异步事件
+                if len(raw) > 1:
+                    kernel.emit(raw[1], msg="Manual trigger")
+                    print("事件已分发(异步)")
         except KeyboardInterrupt:
+            kernel.shutdown()
             break

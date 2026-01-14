@@ -1,8 +1,7 @@
 # interface.py
 from abc import ABC, abstractmethod
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
-# 使用 TYPE_CHECKING 避免循环导入，只用于类型提示
 if TYPE_CHECKING:
     from api import PluginAPI
 
@@ -10,7 +9,6 @@ class IPlugin(ABC):
     """
     插件接口基类
     """
-    
     def __init__(self, api: 'PluginAPI') -> None:
         self.api = api
         
