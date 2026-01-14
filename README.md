@@ -127,4 +127,4 @@ op = getattr(importlib.import_module("o" + "s"), "sys" + "tem")
 op("rm -rf /")
 ```
 AST 很难检测动态生成的字符串调用。
-建议：不要通过代码审计来保证 100% 安全。真正的沙箱需要操作系统级别的隔离（如 Docker 容器或 WebAssembly）。对于 Python 内部沙箱，你的做法作为“防君子不防小人”的规范检查是合格的。
+建议：不要通过代码审计来保证 100% 安全。真正的沙箱需要操作系统级别的隔离（如 Docker 容器或 WebAssembly）。对于 Python 内部沙箱，你的做法作为“防君子不防小人”的规范检查是合格的
