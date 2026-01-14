@@ -100,3 +100,31 @@ Python 无法强制杀死线程：
 sys.modules 的清理极其复杂。虽然删除了引用，但如果其他地方（比如闭包、 traceback 对象）引用了插件里的对象，内存依然不会释放。Python 并不擅长“热卸载”代码。
 
 
+1. 热重载的深坑 (sys.modules 清理)
+你在 unload_plugin 中做了：
+code
+```Python
+keys_to_del = [k for k in sys.modules if f"mk_plugin_{name}" in k]
+for k in keys_to_del: del sys.modules[k]
+```
+风险：Python 的模块导入机制非常复杂。仅仅删除 sys.modules 是不够的。如果其他插件或内核 import 了该插件中的类（例如 from plugins.A import SomeClass），即使你删除了模块，内存中旧类的引用依然存在。
+建议：在微内核架构中，尽量禁止插件之间的直接 import，强制通过 kernel.get_data 或 api.call (RPC风格) 通信，这样才能真正实现无痛热重载。
+2. 同步事件的阻塞风险
+code
+```Python
+def sync_call_event(self, ...):
+    # ...
+    res = func(**kwargs) # 直接在主线程执行
+```
+风险：如果插件 B 的回调函数里写了 time.sleep(100) 或者死循环，整个内核的主线程就会被卡死，CLI 也会无响应。
+建议：即使是同步调用，也可以考虑设置超时机制（虽然在 Python 线程中强制 kill 很难，但可以在架构设计上引入 asyncio 协程来更好地处理超时）。
+3. 安全沙箱的局限性
+虽然你用了 ast 检查，但 Python 是一门动态语言。
+code
+```Python
+# 绕过示例
+op = getattr(importlib.import_module("o" + "s"), "sys" + "tem")
+op("rm -rf /")
+```
+AST 很难检测动态生成的字符串调用。
+建议：不要通过代码审计来保证 100% 安全。真正的沙箱需要操作系统级别的隔离（如 Docker 容器或 WebAssembly）。对于 Python 内部沙箱，你的做法作为“防君子不防小人”的规范检查是合格的。
