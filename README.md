@@ -128,3 +128,11 @@ op("rm -rf /")
 ```
 AST 很难检测动态生成的字符串调用。
 建议：不要通过代码审计来保证 100% 安全。真正的沙箱需要操作系统级别的隔离（如 Docker 容器或 WebAssembly）。对于 Python 内部沙箱，你的做法作为“防君子不防小人”的规范检查是合格的
+
+线程无法真正“杀死”：
+在 _cleanup 中，代码尝试等待线程结束。如果插件写了 while True: pass 且不检查 api.is_active，内核是无法强制终止它的。
+进阶思路：如果需要绝对的隔离和强杀能力，未来可以考虑使用 multiprocessing 替代 threading，但这会极大增加数据共享的复杂度（需要 IPC）。
+沙箱逃逸：
+SecurityAuditor 禁止了 import os，但如果用户使用 __import__("o"+"s") 或者通过 object.__subclasses__ 等黑魔法，依然可以绕过检查。这是 Python 做沙箱的天然劣势。
+卸载的“不干净”：
+虽然代码尝试了 del sys.modules[...] 和 gc.collect()，但在 Python 中，如果其他模块引用了被卸载插件的对象，内存是无法完全释放的（这个代码已经尽力做了最好）。

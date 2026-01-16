@@ -1,9 +1,9 @@
 import os
 import sys
-import re
+import re # regular expression
 import json
-import gc
-import ast
+import gc # garbage collector
+import ast # abstract syntax tree
 import time
 import importlib
 import importlib.util
