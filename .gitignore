@@ -13,4 +13,6 @@ class/
 __pycache__/
 ./__pycache__
 
-
+.others
+others/
+/others
