@@ -1,8 +1,0 @@
-{
-    "name": "security_tools",
-    "version": "1.2.0",
-    "dependencies": [
-        "core_system>=1.0.0"
-    ],
-    "description": "依赖高版本核心系统的安全工具"
-}
