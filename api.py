@@ -1,8 +1,10 @@
 # api.py
+import copy
 
-class PluginAPI:
+class Omni:
     """
-    内核暴露给插件的唯一操作接口（沙箱层）
+    源自拉丁语，意为“全”
+    内核暴露给插件的唯一操作接口(沙箱层/Facade模式)
     """
     
     def __init__(self, kernel, plugin_name):
@@ -13,9 +15,12 @@ class PluginAPI:
         """带插件名的日志"""
         print(f"[{self._plugin_name}] {message}")
         
-    def on(self, event_name, callback):
-        """注册事件监听"""
-        self._kernel.on(event_name, callback)
+    def monitor(self, event_name, callback):
+        """注册事件监听,代理给内核"""
+        if not callable(callback):
+            self.log(f"Error: event {event_name} callback is not callable")
+            return
+        self._kernel.monitor(event_name, callback)
         
     def emit(self, event_name, **kwargs):
         """发送事件"""
@@ -25,13 +30,18 @@ class PluginAPI:
     
     def get_data(self, key, default=None):
         """安全读取全局上下文数据"""
-        return self._kernel.context.get(key, default)
-    
+        # 返回数据的深拷贝，防止插件直接修改全局数据
+        raw_data = self
+        try:
+            return copy.deepcopy(raw_data)
+        except Exception:
+            return copy.copy(raw_data)
+
     def set_data(self, key, value):
         """设置全局上下文数据"""
         # 在这里可以加权限控制，比如禁止修改 "admin"
         if key == "admin":
-            self.log("警告：尝试修改管理员账号被拒绝！")
+            self.log("Error: 权限不足，尝试修改管理员账号被拒绝")
             return
         self._kernel.context[key] = value
         
