@@ -178,8 +178,20 @@ if __name__ == "__main__":
     kernel.init_plugins()
     
     print("\n === Kernel Shell (Secured) === ")
-    print("Commands: list, load <file>, stop <name>, reload <name>, data, exit")
+    print("Type 'help' for summary, or '<command> -h' for details.")
     
+    # [Mentor Strategy] 数据驱动：定义命令详细手册
+    # 这样不仅代码整洁，而且修改文档不需要动逻辑代码
+    CMD_MANUAL = {
+        "list": "\n[usage] list\n[describe] 列出当前所有已加载到内存中的插件名称。",
+        "load": "\n[usage] load <filename>\n[describe] 从 plugins 目录加载新插件。\n[example] load my_plugin(无需输入 .py)",
+        "reload": "\n[usage] reload <name>\n[describe]] 热重载插件。先停止旧实例，再重新读取代码并启动。\n[attention] 这里的 name 是插件名(如 hello_info),不是文件名。",
+        "stop": "\n[usage] stop <name>\n[describe] 调用插件的 stop() 方法并将其从内存卸载。",
+        "data": "\n[usage] data\n[describe] 以 JSON 格式打印当前的全局上下文数据(Context)。",
+        "exit": "\n[usage] exit\n[describe] 停止所有插件并退出内核进程。",
+        "cls": "\n[usage] cls / clear\n[describe] 清空终端屏幕。",
+    }
+
     while True:
         try:
             cmd_str = input("kernel> ").strip()
@@ -188,46 +200,69 @@ if __name__ == "__main__":
             
             parts = cmd_str.split()
             cmd = parts[0].lower()
-            arg = parts[1] if len(parts) > 1 else None
+            
+            # 获取参数列表，如果没有参数则为空列表
+            # [Mentor Note] 这是一个更健壮的参数解析方式
+            args = parts[1:] 
+            
+            # === [核心逻辑] 全局帮助拦截器 ===
+            # 检测用户是否在请求帮助 (e.g., "list -h", "load --help")
+            if args and args[0] in ["-h", "--help"]:
+                if cmd in CMD_MANUAL:
+                    print(CMD_MANUAL[cmd])
+                else:
+                    print(f"No manual entry for '{cmd}'")
+                continue # 拦截结束，不再执行后续逻辑
+            # ==============================
+
+            # --- 命令分发 ---
             
             if cmd == "exit":
                 print("Shutting down...")
                 for name in list(kernel.loaded_plugins.keys()):
                     kernel.stop_plugin(name)
                 break
+                
             elif cmd in ["help", "?"]:
-                print("Commands:")
-                print("  list            - 列出已加载的插件")
-                print("  load <file>     - 加载新插件 (e.g. load my_plugin.py)")
-                print("  reload <name>   - 热重载插件 (e.g. reload hello_info)")
-                print("  stop <name>     - 卸载插件")
-                print("  data            - 查看全局数据上下文")
-                print("  cls / clear     - 清空屏幕")
-                print("  exit            - 退出系统")
+                print("Available Commands:", ", ".join(CMD_MANUAL.keys()))
+                print("Try 'load --help' for specific info.")
+
             elif cmd in ["cls", "clear"]:
                 os.system('cls' if os.name == 'nt' else 'clear')
+
             elif cmd == "list":
                 print(f"Active Plugins: {kernel.list_plugins()}")
+                
             elif cmd == "stop":
-                if arg:
-                    kernel.stop_plugin(arg)
-            elif cmd == "reload":
-                if arg:
-                    if arg.endswith(".py"):
-                        arg = arg[:-3]
-                    kernel.reload_plugin(arg)
+                if args:
+                    kernel.stop_plugin(args[0])
                 else:
-                    print("Usage: reload <plugin_name>")
+                    print("Error: Missing argument. Try 'stop -h'")
+
+            elif cmd == "reload":
+                if args:
+                    target = args[0]
+                    # 自动去除 .py 后缀，提升体验
+                    if target.endswith(".py"):
+                        target = target[:-3]
+                    kernel.reload_plugin(target)
+                else:
+                    print("Error: Missing argument. Try 'reload -h'")
+
             elif cmd == "load":
-                if arg:
-                    kernel.load_plugin(arg)
+                if args:
+                    kernel.load_plugin(args[0])
+                else:
+                    print("Error: Missing filename. Try 'load -h'")
+            
             elif cmd == "data":
-                # 显示数据，验证沙箱效果
                 print(json.dumps(kernel.context, indent=2, ensure_ascii=False, default=str))
+                
             else:
-                print("Unknown command.")
+                print(f"Unknown command: '{cmd}'. Type 'help' for list.")
+                
         except KeyboardInterrupt:
             print("\nForce Exiting...")
             break
         except Exception as e:
-            print(f"[!] Error: {e}")
+            print(f"[!] Shell Error: {e}")
