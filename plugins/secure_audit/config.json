@@ -1,0 +1,6 @@
+{
+  "db_name": "secure.db",
+  "log_file": "audit.log",
+  "retention_days": 30,
+  "console_output": true
+}

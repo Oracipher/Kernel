@@ -107,11 +107,29 @@ class MicroKernel:
             print(f"[!] Plugin directory '{self.PLUGIN_DIR}' does not exist.")
             return
         
-        for filename in os.listdir(self.PLUGIN_DIR):
-            if filename.endswith(".py"):
-                name = os.path.splitext(filename)[0]
-                path = os.path.join(self.PLUGIN_DIR, filename)
-                self._action_loader(filename, name, path)
+        # for filename in os.listdir(self.PLUGIN_DIR):
+        #     if filename.endswith(".py"):
+        #         name = os.path.splitext(filename)[0]
+        #         path = os.path.join(self.PLUGIN_DIR, filename)
+        #         self._action_loader(filename, name, path)
+        
+        for item in os.listdir(self.PLUGIN_DIR):
+            full_path = os.path.join(self.PLUGIN_DIR, item)
+            
+            # 1. 仅处理文件，跳过目录
+            if os.path.isfile(full_path) and item.endswith(".py"):
+                name = os.path.splitext(item)[0]
+                self._action_loader(item, name, full_path)
+                
+            # 2. 支持子目录中的插件
+            elif os.path.isdir(full_path):
+                # 检查目录下是否存在__init__.py
+                init_path = os.path.join(full_path, "__init__.py")
+                if os.path.exists(init_path):
+                    # 将目录名作为插件名
+                    self._action_loader(item, item, init_path)
+                else:
+                    pass
                 
     def load_plugin(self, filename):
         if not filename.endswith(".py"):
