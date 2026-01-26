@@ -7,6 +7,8 @@ import traceback
 import sys
 import json
 
+sys.path.append(os.getcwd())
+
 from interface import Root
 from api import Omni
 
@@ -14,6 +16,7 @@ class MicroKernel:
     
     def __init__(self):
         self.PLUGIN_DIR = "plugins"
+        # 全局上下文数据
         self.context = {
             "version": "1.0",
             "admin": "Administrator",
@@ -26,14 +29,15 @@ class MicroKernel:
         
         if not os.path.exists(self.PLUGIN_DIR):
             os.makedirs(self.PLUGIN_DIR)
+            print(f"[*] Created plugin directory: {self.PLUGIN_DIR}")
             
     def monitor(self, event_name: str, callback_func):
         """Register an event listener"""
         if event_name not in self._events:
             self._events[event_name] = []
         self._events[event_name].append(callback_func)
-        print("[System] Listener registered:")
-        print(f" {event_name} -> {callback_func.__name__}")
+        # print("[System] Listener registered:")
+        # print(f" {event_name} -> {callback_func.__name__}")
         
     def emit(self, event_name:str, **kwargs):
         """Broadcast an event to all listeners"""
@@ -42,13 +46,15 @@ class MicroKernel:
                 try:
                     func(**kwargs)
                 except Exception as e:
-                    print(f"[!] Event handling error ({event_name}): {e}")
+                    print(f"[!] Event error ({event_name}): {e}")
                     traceback.print_exc()
                         
     # --- Loader Mechanism --- #
     
     def _bootstrap(self, mod, name):
-        """Check if the module has a Plugin class and start it"""
+        """
+        Check if the module has a Plugin class and start it
+        """
         if hasattr(mod, "Plugin"):
             try:
                 # 1. Create API instance
@@ -60,32 +66,27 @@ class MicroKernel:
                 if not isinstance(plugin_instance, Root):
                     print(f"[!] Error: {name} does not inherit from interface.")
                     print("Root, potential runtime issues.")
+                    return
                     
                 self.loaded_plugins[name] = plugin_instance
                 plugin_instance.start()
                 print(f"[+] {name} is ready")
             except TypeError as e:
-                print(f"[!] {name} failed to load: interface signature mismatch")
-                print(f"Details: {e}")
+                print(f"[!] '{name}' signature mismatch: {e}")
                 traceback.print_exc()
             except Exception as e:
-                print(f"[!] {name} failed to load: {e}")
+                print(f"[!] '{name}' failed to bootstrap: {e}")
                 traceback.print_exc()
         else:
-            print(f"[*] {name} does not have a Plugin class, skipping.")
+            print(f"[*] Module '{name}' has no 'Plugin' class, skipping.")
             
     def _action_loader(self, filename, name, path):
         """Dynamically load a plugin module from file"""
         try:
             # get spec
             spec = importlib.util.spec_from_file_location(name,path)
-            if spec is None:
-                print(f"[-] Error: could not load spec for {filename}")
-                print("file not found or invalid module.")
-                return
-            
-            if spec.loader is None:
-                print(f"[-] Error: no loader available for {filename}")
+            if spec is None or spec:
+                print(f"[-] Error: Could not load spec for {filename}")
                 return
             
             # create module from spec
@@ -108,6 +109,11 @@ class MicroKernel:
     def init_plugins(self):
         """Initialize all plugins in the plugin directory"""
         print(f"[*] Scanning {self.PLUGIN_DIR}...")
+        
+        if not os.path.exists(self.PLUGIN_DIR):
+            print(f"[!] Plugin directory '{self.PLUGIN_DIR}' does not exist.")
+            return
+        
         for filename in os.listdir(self.PLUGIN_DIR):
             if filename.endswith(".py"):
                 name = os.path.splitext(filename)[0]
@@ -120,9 +126,15 @@ class MicroKernel:
             filename += ".py"
         name = os.path.splitext(filename)[0]
         path = os.path.join(self.PLUGIN_DIR, filename)
+        
         if not os.path.exists(path):
             print(f"[!] File not found: {path}")
             return
+        
+        if name in self.loaded_plugins:
+            print(f"[!] Plugin {name} is already loaded.")
+            return
+        
         self._action_loader(filename, name, path)
         
     def stop_plugin(self, name):
@@ -135,10 +147,13 @@ class MicroKernel:
             
             # 清理引用
             del self.loaded_plugins[name]
+            
+            if name in sys.modules:
+                del sys.modules[name]
             if name in self.loaded_modules:
-                del self.loaded_modules[name]
+                del self.plugin_paths[name]
                 
-            print(f"[+] {name} stopped.")
+            print(f"[-] Plugin '{name}' stopped and unloaded.")
         else:
             print(f"[!] Plugin {name} is not running.")
             
@@ -151,8 +166,10 @@ class MicroKernel:
         if not path:
             # 尝试从 loaded_modules 逆推，或者直接报错
             # 
-            print(f"[!] Cannot reload {name}: path unknown.")
+            print(f"[!] Cannot reload '{name}': Path unknown or not loaded.")
             return
+        
+        print(f"[*] Reloading plugin '{name}'...")
 
         # 3. 停止旧实例
         if name in self.loaded_plugins:
@@ -178,6 +195,7 @@ if __name__ == "__main__":
             cmd_str = input("kernel> ").strip()
             if not cmd_str:
                 continue
+            
             parts = cmd_str.split()
             cmd = parts[0].lower()
             arg = parts[1] if len(parts) > 1 else None
@@ -188,6 +206,8 @@ if __name__ == "__main__":
                 for name in list(kernel.loaded_plugins.keys()):
                     kernel.stop_plugin(name)
                 break
+            elif cmd == "help":
+                print("Commands: list, load <file>, stop <name>, reload <name>, data, exit")
             elif cmd == "list":
                 print(f"Active Plugins: {kernel.list_plugins()}")
             elif cmd == "stop":
@@ -211,7 +231,7 @@ if __name__ == "__main__":
             else:
                 print("Unknown command.")
         except KeyboardInterrupt:
-            print("\nExiting...")
+            print("\nForce Exiting...")
             break
         except Exception as e:
             print(f"[!] Error: {e}")
