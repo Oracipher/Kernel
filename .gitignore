@@ -16,3 +16,6 @@ __pycache__/
 .others
 others/
 /others
+
+version/
+version
