@@ -7,9 +7,10 @@ import traceback
 import sys
 import json
 
-sys.path.append(os.getcwd())
+# [Mentor Note] 移除 sys.path.append(os.getcwd()) 
+# 这通常是不安全的，且如果运行目录正确，这行是多余的。
 
-from interface import Root
+from interface import IPlugin  # 修正引用名称 Root -> IPlugin
 from api import Omni
 
 class MicroKernel:
@@ -22,9 +23,9 @@ class MicroKernel:
             "admin": "Administrator",
             "data": []  # 用于 security_monitor 存储警报
         }
-        self.loaded_plugins = {} # 存储实例化后的插件对象: {name: instance}
-        self.loaded_modules = {} # 存储模块对象: {name: module}
-        self.plugin_paths = {}   # 存储插件路径用于重载: {name: path}
+        self.loaded_plugins = {} # {name: instance}
+        self.loaded_modules = {} # {name: module}
+        self.plugin_paths = {}   # {name: path}
         self._events = {}        # 事件总线
         
         if not os.path.exists(self.PLUGIN_DIR):
@@ -36,13 +37,13 @@ class MicroKernel:
         if event_name not in self._events:
             self._events[event_name] = []
         self._events[event_name].append(callback_func)
-        # print("[System] Listener registered:")
-        # print(f" {event_name} -> {callback_func.__name__}")
         
     def emit(self, event_name:str, **kwargs):
         """Broadcast an event to all listeners"""
         if event_name in self._events:
-            for func in self._events[event_name]: 
+            # [Mentor Note] 复制列表进行迭代，防止回调函数内部修改监听列表导致 Crash
+            listeners = self._events[event_name][:] 
+            for func in listeners: 
                 try:
                     func(**kwargs)
                 except Exception as e:
@@ -52,28 +53,22 @@ class MicroKernel:
     # --- Loader Mechanism --- #
     
     def _bootstrap(self, mod, name):
-        """
-        Check if the module has a Plugin class and start it
-        """
+        """Check if the module has a Plugin class and start it"""
         if hasattr(mod, "Plugin"):
             try:
                 # 1. Create API instance
                 plugin_api = Omni(self, name)
-                # 2. Instantiate the plugin, injecting the API
+                # 2. Instantiate the plugin
                 plugin_instance = mod.Plugin(plugin_api)
                 
                 # 3. Check type inheritance
-                if not isinstance(plugin_instance, Root):
-                    print(f"[!] Error: {name} does not inherit from interface.")
-                    print("Root, potential runtime issues.")
+                if not isinstance(plugin_instance, IPlugin):
+                    print(f"[!] Error: {name} does not inherit from IPlugin.")
                     return
                     
                 self.loaded_plugins[name] = plugin_instance
                 plugin_instance.start()
                 print(f"[+] {name} is ready")
-            except TypeError as e:
-                print(f"[!] '{name}' signature mismatch: {e}")
-                traceback.print_exc()
             except Exception as e:
                 print(f"[!] '{name}' failed to bootstrap: {e}")
                 traceback.print_exc()
@@ -83,22 +78,20 @@ class MicroKernel:
     def _action_loader(self, filename, name, path):
         """Dynamically load a plugin module from file"""
         try:
-            # get spec
-            spec = importlib.util.spec_from_file_location(name,path)
-            if spec is None or spec:
+            spec = importlib.util.spec_from_file_location(name, path)
+            
+            # [Mentor Note] 致命错误修复！
+            # 原代码 `if spec is None or spec:` 会导致所有成功加载的模块也被判定为错误。
+            if spec is None or spec.loader is None:
                 print(f"[-] Error: Could not load spec for {filename}")
                 return
             
-            # create module from spec
             mod = importlib.util.module_from_spec(spec)
-            # insert into sys.modules
             sys.modules[name] = mod
-            # execute the module
             spec.loader.exec_module(mod)
-            # store module reference
+            
             self.loaded_modules[name] = mod
             self.plugin_paths[name] = path
-            # bootstrap the plugin
             self._bootstrap(mod, name)
         except Exception as e:
             print(f"[-] Failed to load {filename}: {e}")
@@ -121,7 +114,6 @@ class MicroKernel:
                 self._action_loader(filename, name, path)
                 
     def load_plugin(self, filename):
-        # filename = os.path.basename(filename)
         if not filename.endswith(".py"):
             filename += ".py"
         name = os.path.splitext(filename)[0]
@@ -145,13 +137,15 @@ class MicroKernel:
             except Exception as e:
                 print(f"[!] Error stopping {name}: {e}")
             
-            # 清理引用
             del self.loaded_plugins[name]
             
+            # 清理 sys.modules
             if name in sys.modules:
                 del sys.modules[name]
-            if name in self.loaded_modules:
-                del self.plugin_paths[name]
+            
+            # [Mentor Note] 修复：不要删除 loaded_modules 和 plugin_paths 中的记录
+            # 否则 reload_plugin 找不到路径。
+            # if name in self.loaded_modules: ... (Removed)
                 
             print(f"[-] Plugin '{name}' stopped and unloaded.")
         else:
@@ -159,24 +153,20 @@ class MicroKernel:
             
     def reload_plugin(self, name):
         """Reload a plugin by name"""
-        # 1. 保存路径 (因为 stop_plugin 会清理 loaded_modules，但我们需要路径重新加载)
+        # 1. 获取路径
         path = self.plugin_paths.get(name)
         
-        # 2. 只有当插件曾经被加载过，且我们知道它在哪里时才重载
         if not path:
-            # 尝试从 loaded_modules 逆推，或者直接报错
-            # 
-            print(f"[!] Cannot reload '{name}': Path unknown or not loaded.")
+            print(f"[!] Cannot reload '{name}': Path unknown or never loaded.")
             return
         
         print(f"[*] Reloading plugin '{name}'...")
 
-        # 3. 停止旧实例
+        # 2. 停止旧实例
         if name in self.loaded_plugins:
             self.stop_plugin(name)
             
-        # 4. 重新加载 (像新文件一样加载)
-        print(f"[*] Reloading {name} from {path}...")
+        # 3. 重新加载
         filename = os.path.basename(path)
         self._action_loader(filename, name, path)
 
@@ -187,8 +177,8 @@ if __name__ == "__main__":
     kernel = MicroKernel()
     kernel.init_plugins()
     
-    print("\n === Kernel Shell === ")
-    # print("Commands: list, load <file>, stop <name>, reload <name>, data, exit")
+    print("\n === Kernel Shell (Secured) === ")
+    print("Commands: list, load <file>, stop <name>, reload <name>, data, exit")
     
     while True:
         try:
@@ -202,32 +192,38 @@ if __name__ == "__main__":
             
             if cmd == "exit":
                 print("Shutting down...")
-                # 复制 keys 列表以防遍历时字典改变
                 for name in list(kernel.loaded_plugins.keys()):
                     kernel.stop_plugin(name)
                 break
-            elif cmd == "help":
-                print("Commands: list, load <file>, stop <name>, reload <name>, data, exit")
+            elif cmd in ["help", "?"]:
+                print("Commands:")
+                print("  list            - 列出已加载的插件")
+                print("  load <file>     - 加载新插件 (e.g. load my_plugin.py)")
+                print("  reload <name>   - 热重载插件 (e.g. reload hello_info)")
+                print("  stop <name>     - 卸载插件")
+                print("  data            - 查看全局数据上下文")
+                print("  cls / clear     - 清空屏幕")
+                print("  exit            - 退出系统")
+            elif cmd in ["cls", "clear"]:
+                os.system('cls' if os.name == 'nt' else 'clear')
             elif cmd == "list":
                 print(f"Active Plugins: {kernel.list_plugins()}")
             elif cmd == "stop":
                 if arg:
                     kernel.stop_plugin(arg)
-                else:
-                    print("Usage: stop <plugin_name>")
             elif cmd == "reload":
                 if arg:
+                    if arg.endswith(".py"):
+                        arg = arg[:-3]
                     kernel.reload_plugin(arg)
                 else:
                     print("Usage: reload <plugin_name>")
             elif cmd == "load":
                 if arg:
                     kernel.load_plugin(arg)
-                else:
-                    print("Usage: load <filename.py>")
             elif cmd == "data":
-                # 格式化打印 context 数据，方便查看
-                print(json.dumps(kernel.context, indent=2, ensure_ascii=False))
+                # 显示数据，验证沙箱效果
+                print(json.dumps(kernel.context, indent=2, ensure_ascii=False, default=str))
             else:
                 print("Unknown command.")
         except KeyboardInterrupt:
@@ -235,5 +231,3 @@ if __name__ == "__main__":
             break
         except Exception as e:
             print(f"[!] Error: {e}")
-            traceback.print_exc()
-            

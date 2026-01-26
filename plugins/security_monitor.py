@@ -1,3 +1,4 @@
+# plugins/security_monitor.py
 from interface import IPlugin
 
 class Plugin(IPlugin):
@@ -15,5 +16,6 @@ class Plugin(IPlugin):
         
         # 记录高危日志到数据中心
         if level == "HIGH":
+            # 这里的 "data" 不是受保护的 key，应该可以追加
             self.api.append_data("data", f"BREACH: {message}")
             self.api.log("已将入侵记录写入系统数据中心")

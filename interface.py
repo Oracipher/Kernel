@@ -2,9 +2,9 @@
 
 from abc import ABC, abstractmethod
 
-class Root(ABC):
+class IPlugin(ABC):
     """
-    基类接口插件基类接口 (Protocol)
+    插件基类接口 (Protocol)
     强制所有插件必须实现标准生命周期方法
     """
     
