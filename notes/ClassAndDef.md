@@ -83,7 +83,7 @@
 1.  **`__init__(self)`**
     *   **作用**：初始化“世界”。创建插件目录，定义全局上下文 `context`，初始化用于存储插件和模块的字典。
 
-2.  **`monitor(self, event_name, callback_func)`**
+2.  **`synapse(self, event_name, callback_func)`**
     *   **作用**：内核级的事件注册。把函数存入 `_events` 字典。
 
 3.  **`emit(self, event_name, **kwargs)`**
