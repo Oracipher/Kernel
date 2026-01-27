@@ -31,9 +31,13 @@ class Omni:
         """提供别名以符合常见习惯"""
         return self.synapse(event_name, callback)
         
-    def emit(self, event_name, **kwargs):
+    def impulse(self, event_name, **kwargs):
         """发送事件"""
-        self._kernel.emit(event_name, **kwargs)
+        self._kernel.impulse(event_name, **kwargs)
+        
+    def emit(self, event_name, **kwargs):
+        """提供别名以符合常见习惯"""
+        return self.impulse(event_name, **kwargs)
         
     # --- 新增的数据操作接口  ---
     

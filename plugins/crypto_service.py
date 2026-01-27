@@ -27,4 +27,4 @@ class Plugin(Proot):
         
         # 定向回复
         reply_event = f"res:sign:{request_id}"
-        self.api.emit(reply_event, result=response)
+        self.api.impulse(reply_event, result=response)

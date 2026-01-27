@@ -58,7 +58,7 @@ class Plugin(Proot):
         
         if callback_event:
             # 如果调用者提供了回调地址，将数据发送回去
-            self.api.emit(callback_event, data=logs)
+            self.api.impulse(callback_event, data=logs)
         else:
             # 兼容旧逻辑或命令行调试
             print("\n--- 最新审计日志 (Console Dump) ---")

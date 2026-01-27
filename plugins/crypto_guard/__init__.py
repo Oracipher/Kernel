@@ -50,7 +50,7 @@ class Plugin(Proot):
             self.api.set_data(result_key, result_data)
             
             # 发送完成信号
-            self.api.emit(f"res:sign:{request_id}", result=result_data)
+            self.api.impulse(f"res:sign:{request_id}", result=result_data)
         else:
             self.api.log(f"签名失败: {sig}")
 
@@ -60,4 +60,4 @@ class Plugin(Proot):
         
         result_key = f"buffer:crypto:{request_id}"
         self.api.set_data(result_key, {"valid": is_valid})
-        self.api.emit(f"res:verify:{request_id}", valid=is_valid)
+        self.api.impulse(f"res:verify:{request_id}", valid=is_valid)

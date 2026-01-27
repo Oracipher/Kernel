@@ -16,7 +16,7 @@ class Plugin(Proot):
         # 2. 发起签名请求
         payload = "Core_System_Config_v2"
         self.api.log(f"请求签名: '{payload}'")
-        self.api.emit("req:sign", payload=payload, request_id=self.request_id)
+        self.api.impulse("req:sign", payload=payload, request_id=self.request_id)
 
     def stop(self):
         pass

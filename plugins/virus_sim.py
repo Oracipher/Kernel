@@ -12,7 +12,7 @@ class Plugin(Proot):
         self.api.append_data("version", "1.0-HACKED")
         
         # 触发事件
-        self.api.emit("risk_alert", level="HIGH", message="检测到 rootkit 注入！")
+        self.api.impulse("risk_alert", level="HIGH", message="检测到 rootkit 注入！")
 
     def stop(self):
         self.api.log("模拟结束")

@@ -8,7 +8,7 @@ class Plugin(Proot):
         self.api.log("测试者上线...")
         
         # 1. 模拟写入
-        self.api.emit("audit:record", event_type="LOGIN", message="Admin login attempt")
+        self.api.impulse("audit:record", event_type="LOGIN", message="Admin login attempt")
         
         # 2. 注册查询结果的回调监听
         # 这里的事件名必须唯一，防止与其他插件冲突
@@ -17,7 +17,7 @@ class Plugin(Proot):
         
         # 3. 发起查询，并告知对方把结果发到哪里 (Callback Pattern)
         self.api.log("正在请求审计记录...")
-        self.api.emit("audit:query", limit=2, callback_event=my_callback_event)
+        self.api.impulse("audit:query", limit=2, callback_event=my_callback_event)
 
     def stop(self):
         pass
