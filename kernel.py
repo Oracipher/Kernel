@@ -7,10 +7,7 @@ import traceback
 import sys
 import json
 
-# [Mentor Note] 移除 sys.path.append(os.getcwd()) 
-# 这通常是不安全的，且如果运行目录正确，这行是多余的。
-
-from interface import IPlugin  # 修正引用名称 Root -> IPlugin
+from interface import Proot
 from api import Omni
 
 class MicroKernel:
@@ -41,7 +38,6 @@ class MicroKernel:
     def emit(self, event_name:str, **kwargs):
         """Broadcast an event to all listeners"""
         if event_name in self._events:
-            # [Mentor Note] 复制列表进行迭代，防止回调函数内部修改监听列表导致 Crash
             listeners = self._events[event_name][:] 
             for func in listeners: 
                 try:
@@ -62,8 +58,8 @@ class MicroKernel:
                 plugin_instance = mod.Plugin(plugin_api)
                 
                 # 3. Check type inheritance
-                if not isinstance(plugin_instance, IPlugin):
-                    print(f"[!] Error: {name} does not inherit from IPlugin.")
+                if not isinstance(plugin_instance, Proot):
+                    print(f"[!] Error: {name} does not inherit from Proot (Plugin Interface Root).")
                     return
                     
                 self.loaded_plugins[name] = plugin_instance
@@ -80,8 +76,6 @@ class MicroKernel:
         try:
             spec = importlib.util.spec_from_file_location(name, path)
             
-            # [Mentor Note] 致命错误修复！
-            # 原代码 `if spec is None or spec:` 会导致所有成功加载的模块也被判定为错误。
             if spec is None or spec.loader is None:
                 print(f"[-] Error: Could not load spec for {filename}")
                 return
@@ -160,10 +154,6 @@ class MicroKernel:
             # 清理 sys.modules
             if name in sys.modules:
                 del sys.modules[name]
-            
-            # [Mentor Note] 修复：不要删除 loaded_modules 和 plugin_paths 中的记录
-            # 否则 reload_plugin 找不到路径。
-            # if name in self.loaded_modules: ... (Removed)
                 
             print(f"[-] Plugin '{name}' stopped and unloaded.")
         else:
@@ -197,9 +187,7 @@ if __name__ == "__main__":
     
     print("\n === Kernel Shell (Secured) === ")
     print("Type 'help' for summary, or '<command> -h' for details.")
-    
-    # [Mentor Strategy] 数据驱动：定义命令详细手册
-    # 这样不仅代码整洁，而且修改文档不需要动逻辑代码
+
     CMD_MANUAL = {
         "list": "\n[usage] list\n[describe] 列出当前所有已加载到内存中的插件名称。",
         "load": "\n[usage] load <filename>\n[describe] 从 plugins 目录加载新插件。\n[example] load my_plugin(无需输入 .py)",
@@ -220,19 +208,15 @@ if __name__ == "__main__":
             cmd = parts[0].lower()
             
             # 获取参数列表，如果没有参数则为空列表
-            # [Mentor Note] 这是一个更健壮的参数解析方式
             args = parts[1:] 
-            
-            # === [核心逻辑] 全局帮助拦截器 ===
-            # 检测用户是否在请求帮助 (e.g., "list -h", "load --help")
+
             if args and args[0] in ["-h", "--help"]:
                 if cmd in CMD_MANUAL:
                     print(CMD_MANUAL[cmd])
                 else:
                     print(f"No manual entry for '{cmd}'")
                 continue # 拦截结束，不再执行后续逻辑
-            # ==============================
-
+            
             # --- 命令分发 ---
             
             if cmd == "exit":
@@ -260,7 +244,7 @@ if __name__ == "__main__":
             elif cmd == "reload":
                 if args:
                     target = args[0]
-                    # 自动去除 .py 后缀，提升体验
+                    # 自动去除 .py 后缀
                     if target.endswith(".py"):
                         target = target[:-3]
                     kernel.reload_plugin(target)

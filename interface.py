@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 
-class IPlugin(ABC):
+class Proot(ABC):
     """
     插件基类接口 (Protocol)
     强制所有插件必须实现标准生命周期方法
