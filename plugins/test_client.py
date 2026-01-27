@@ -1,36 +1,30 @@
-# plugins/crypto_service.py
-
+# plugins/test_client.py
 from interface import IPlugin
-import hashlib
-import base64
+import uuid
 
 class Plugin(IPlugin):
     def start(self):
-        self.api.log("加密服务中心已启动，等待签名请求...")
-        # 监听所有签名请求
-        self.api.on("req:sign", self.handle_sign_request)
+        # 生成一个唯一的请求ID
+        self.request_id = str(uuid.uuid4())[:8]
+        self.api.log(f"客户端上线 (ID: {self.request_id})")
+        
+        # 1. 监听特定的回复频道
+        # 对应 CryptoService 发出的 "res:sign:{request_id}"
+        reply_channel = f"res:sign:{self.request_id}"
+        self.api.on(reply_channel, self.handle_signature)
+        
+        # 2. 发起签名请求
+        payload = "Core_System_Config_v2"
+        self.api.log(f"请求签名: '{payload}'")
+        self.api.emit("req:sign", payload=payload, request_id=self.request_id)
 
     def stop(self):
-        self.api.log("加密服务中心下线")
+        pass
 
-    def handle_sign_request(self, payload, request_id):
-        """处理签名请求并点对点回复"""
-        self.api.log(f"正在处理来自 {request_id} 的请求...")
-        
-        # 模拟业务耗时
-        # time.sleep(0.1) 
-        
-        # 简单的模拟签名逻辑 (Base64 + Hash)
-        digest = hashlib.sha256(payload.encode()).hexdigest()
-        signature = base64.b64encode(digest.encode()).decode()
-        
-        response_data = {
-            "payload": payload,
-            "signature": signature,
-            "processor": "CryptoService_v1"
-        }
-        
-        # 动态构建回复事件名，实现“定向广播”
-        reply_event = f"res:sign:{request_id}"
-        self.api.emit(reply_event, result=response_data)
-        self.api.log(f"已回复: {reply_event}")
+    def handle_signature(self, result):
+        """处理回调"""
+        # result 是一个字典，由 CryptoService 发送
+        sig = result.get('signature')
+        processor = result.get('processor')
+        self.api.log(f"收到签名结果: {sig[:10]}... (By {processor})")
+        self.api.log("业务流程完成。")
