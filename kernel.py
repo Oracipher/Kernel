@@ -35,7 +35,7 @@ class MicroKernel:
             self._events[event_name] = []
         self._events[event_name].append(callback_func)
         
-    def impuse(self, event_name:str, **kwargs):
+    def impulse(self, event_name:str, **kwargs):
         """Broadcast an event to all listeners"""
         if event_name in self._events:
             listeners = self._events[event_name][:] 

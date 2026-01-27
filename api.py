@@ -1,6 +1,6 @@
 # api.py
 
-import copy
+import types
 
 class Omni:
     """
@@ -47,7 +47,22 @@ class Omni:
             self.log(f"Security Alert: 拒绝访问/修改受保护的键 '{key}'")
             return False
         return True
-
+    
+    def _to_immutable(self, data):
+        """
+        递归的将数据转换为不可变类型
+        """
+        if isinstance(data, dict):
+            # 将字典转换为只读视图，并递归处理其中的值
+            # 注意：这里创建了一个新的字典结构来承载只读视图，属于“只读快照”策略
+            return types.MappingProxyType({k: self._to_immutable(v) for k, v in data.items()})
+        elif isinstance(data, list):
+            # 将列表转换为元组 (不可变)
+            return tuple(self._to_immutable(v) for v in data)
+        else:
+            # 字符串、数字等本身就是不可变的，直接返回
+            return data
+            
     def get_data(self, key, default=None):
         """安全读取全局上下文数据"""
         if key not in self._kernel.context:
@@ -60,7 +75,7 @@ class Omni:
         此时返回默认值并记录安全警告日志。
         """
         try:
-            return copy.deepcopy(raw_data)
+            return self._to_immutable(raw_data)
         except Exception:
             self.log(f"Security Warning: Data '{key}' is unsafe to copy. Access denied.")
             return default # 安全失败 (Fail Safe)
