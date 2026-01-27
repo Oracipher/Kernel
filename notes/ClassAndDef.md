@@ -18,13 +18,13 @@
 
 3.  **`synapse(self, event_name, callback)`**
     *   **作用**：注册事件监听。
-    *   **逻辑**：它不自己处理，而是转手交给内核（`self._kernel.monitor`）。但在转交前做了一层检查（`callable`），防止传入不能执行的东西导致内核崩溃。
+    *   **逻辑**：它不自己处理，而是转手交给内核（`self._kernel.synapse`）。但在转交前做了一层检查（`callable`），防止传入不能执行的东西导致内核崩溃。
 
 4.  **`on(self, event_name, callback)`**
     *   **作用**：`synapse` 的别名。
     *   **关键点**：这是为了照顾不同开发者的习惯（类似于 JavaScript 中的 `.on()`），属于“语法糖”。
 
-5.  **`emit(self, event_name, **kwargs)`**
+5.  **`impulse(self, event_name, **kwargs)`**
     *   **作用**：触发一个事件，通知其他插件。
     *   **逻辑**：同样是转手交给内核去广播。
 
@@ -34,7 +34,7 @@
 
 7.  **`get_data(self, key, default=None)`**
     *   **作用**：获取全局数据。
-    *   **核心逻辑**：**深拷贝（Deep Copy）**。这是最关键的一点！它给插件的不是数据的“真身”，而是“复印件”。插件随便改这个复印件，都不会影响内核里的原件。
+    *   **核心逻辑**：**递归不可变转换（Recursive Immutable Transformation）**。这是最关键的一点！它给插件的不是数据的“真身”，而是“复印件”。插件随便改这个复印件，都不会影响内核里的原件。
 
 8.  **`set_data(self, key, value)`**
     *   **作用**：修改/设置全局数据。
