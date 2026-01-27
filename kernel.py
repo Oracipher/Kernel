@@ -18,7 +18,7 @@ class MicroKernel:
         self.context = {
             "version": "1.0",
             "admin": "Administrator",
-            "data": []  # 用于 security_monitor 存储警报
+            "data": []  # 可供插件读写的共享数据区
         }
         self.loaded_plugins = {} # {name: instance}
         self.loaded_modules = {} # {name: module}
@@ -29,7 +29,7 @@ class MicroKernel:
             os.makedirs(self.PLUGIN_DIR)
             print(f"[*] Created plugin directory: {self.PLUGIN_DIR}")
             
-    def monitor(self, event_name: str, callback_func):
+    def gazer(self, event_name: str, callback_func):
         """Register an event listener"""
         if event_name not in self._events:
             self._events[event_name] = []

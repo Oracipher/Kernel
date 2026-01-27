@@ -20,16 +20,16 @@ class Omni:
         """带插件名的日志"""
         print(f"[{self._plugin_name}] {message}")
         
-    def monitor(self, event_name, callback):
+    def gazer(self, event_name, callback):
         """注册事件监听,代理给内核"""
         if not callable(callback):
             self.log(f"Error: event {event_name} callback is not callable")
             return
-        self._kernel.monitor(event_name, callback)
+        self._kernel.gazer(event_name, callback)
 
     def on(self, event_name, callback):
         """提供别名以符合常见习惯"""
-        return self.monitor(event_name, callback)
+        return self.gazer(event_name, callback)
         
     def emit(self, event_name, **kwargs):
         """发送事件"""
