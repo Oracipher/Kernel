@@ -1,10 +1,11 @@
+
 # plugins/secure_audit/src/utils.py
 import os
 import hashlib
+import hmac
 import datetime
 
 class EnvLoader:
-    """简易的 .env 解析器"""
     @staticmethod
     def load(path):
         env_vars = {}
@@ -18,13 +19,23 @@ class EnvLoader:
                     continue
                 if '=' in line:
                     key, value = line.split('=', 1)
-                    env_vars[key.strip()] = value.strip()
+                    # [Fix] 去除首尾空格和可能的引号
+                    key = key.strip()
+                    value = value.strip().strip("'").strip('"')
+                    env_vars[key] = value
         return env_vars
 
 def generate_hash(content, salt):
-    """生成防篡改指纹"""
-    raw = f"{content}{salt}".encode('utf-8')
-    return hashlib.sha256(raw).hexdigest()
+    """
+    [Fix] 使用 HMAC-SHA256 生成防篡改指纹
+    比简单的 sha256(content + salt) 更安全
+    """
+    if isinstance(salt, str):
+        salt = salt.encode('utf-8')
+    if isinstance(content, str):
+        content = content.encode('utf-8')
+        
+    return hmac.new(salt, content, hashlib.sha256).hexdigest()
 
 def get_timestamp():
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")

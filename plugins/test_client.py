@@ -1,32 +1,36 @@
-# plugins/test_client.py
+# plugins/crypto_service.py
+
 from interface import IPlugin
-import uuid
+import hashlib
+import base64
 
 class Plugin(IPlugin):
     def start(self):
-        self.my_id = str(uuid.uuid4())[:8]
-        self.api.log(f"测试客户端启动 (ID: {self.my_id})")
-        
-        # 1. 监听加密服务的回复
-        # 动态注册监听器，事件名包含了自己的ID，实现点对点通信的效果
-        self.api.on(f"res:sign:{self.my_id}", self.on_signed)
-        
-        # 2. 发起签名请求
-        message = "Critical System Config"
-        self.api.log(f"请求签名数据: '{message}'")
-        self.api.emit("req:sign", payload=message, request_id=self.my_id)
+        self.api.log("加密服务中心已启动，等待签名请求...")
+        # 监听所有签名请求
+        self.api.on("req:sign", self.handle_sign_request)
 
     def stop(self):
-        pass
+        self.api.log("加密服务中心下线")
 
-    def on_signed(self, result):
-        """收到签名结果"""
-        self.api.log(f"收到签名结果: {result['signature']}")
+    def handle_sign_request(self, payload, request_id):
+        """处理签名请求并点对点回复"""
+        self.api.log(f"正在处理来自 {request_id} 的请求...")
         
-        # 立即尝试验证（自测）
-        sig = result['signature']
-        msg = result['payload']
-        # 这里可以直接调用 engine 吗？不行！必须通过事件总线，因为 engine 是隔离的。
-        # 但为了演示简单，我们假设验证通过。
+        # 模拟业务耗时
+        # time.sleep(0.1) 
         
-        self.api.log("流程结束。数据完整性保护已生效。")
+        # 简单的模拟签名逻辑 (Base64 + Hash)
+        digest = hashlib.sha256(payload.encode()).hexdigest()
+        signature = base64.b64encode(digest.encode()).decode()
+        
+        response_data = {
+            "payload": payload,
+            "signature": signature,
+            "processor": "CryptoService_v1"
+        }
+        
+        # 动态构建回复事件名，实现“定向广播”
+        reply_event = f"res:sign:{request_id}"
+        self.api.emit(reply_event, result=response_data)
+        self.api.log(f"已回复: {reply_event}")
