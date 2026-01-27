@@ -16,12 +16,12 @@
     *   **作用**：打印日志，但会自动带上 `[插件名]` 的前缀。
     *   **关键点**：方便调试，一眼就能看出是哪个插件在说话。
 
-3.  **`gazer(self, event_name, callback)`**
+3.  **`synapse(self, event_name, callback)`**
     *   **作用**：注册事件监听。
     *   **逻辑**：它不自己处理，而是转手交给内核（`self._kernel.monitor`）。但在转交前做了一层检查（`callable`），防止传入不能执行的东西导致内核崩溃。
 
 4.  **`on(self, event_name, callback)`**
-    *   **作用**：`gazer` 的别名。
+    *   **作用**：`synapse` 的别名。
     *   **关键点**：这是为了照顾不同开发者的习惯（类似于 JavaScript 中的 `.on()`），属于“语法糖”。
 
 5.  **`emit(self, event_name, **kwargs)`**

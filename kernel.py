@@ -29,7 +29,7 @@ class MicroKernel:
             os.makedirs(self.PLUGIN_DIR)
             print(f"[*] Created plugin directory: {self.PLUGIN_DIR}")
             
-    def gazer(self, event_name: str, callback_func):
+    def synapse(self, event_name: str, callback_func):
         """Register an event listener"""
         if event_name not in self._events:
             self._events[event_name] = []
