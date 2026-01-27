@@ -1,9 +1,9 @@
 # plugins/virus_sim.py
 
-from interface import IPlugin
+from interface import Proot
 # import time
 
-class Plugin(IPlugin):
+class Plugin(Proot):
     def start(self):
         self.api.log("模拟病毒启动...")
         self.api.log("试图注入恶意代码...")

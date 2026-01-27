@@ -1,10 +1,10 @@
 # plugins/crypto_service.py
-from interface import IPlugin
+from interface import Proot
 import hashlib
 import base64
 # import time
 
-class Plugin(IPlugin):
+class Plugin(Proot):
     def start(self):
         self.api.log("加密服务中心已启动，监听 req:sign ...")
         self.api.on("req:sign", self.handle_sign_request)

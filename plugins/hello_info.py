@@ -1,8 +1,8 @@
 # plugins/hello_info.py
 
-from interface import IPlugin
+from interface import Proot
 
-class Plugin(IPlugin):
+class Plugin(Proot):
     def start(self):
         self.api.log("插件启动成功！")
         

@@ -1,9 +1,9 @@
 # plugins/crypto_guard/__init__.py
 
-from interface import IPlugin
+from interface import Proot
 from .engine import CryptoEngine
 
-class Plugin(IPlugin):
+class Plugin(Proot):
     def start(self):
         self.api.log("初始化安全协处理器 (Crypto Co-processor)...")
         

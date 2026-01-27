@@ -1,8 +1,8 @@
 
 # plugins/security_monitor.py
-from interface import IPlugin
+from interface import Proot
 
-class Plugin(IPlugin):
+class Plugin(Proot):
     def start(self):
         self.api.log("安保系统启动")
         self.api.on("risk_alert", self.handle_alert)

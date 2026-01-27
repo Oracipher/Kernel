@@ -1,8 +1,8 @@
 # plugins/test_client.py
-from interface import IPlugin
+from interface import Proot
 import uuid
 
-class Plugin(IPlugin):
+class Plugin(Proot):
     def start(self):
         # 生成一个唯一的请求ID
         self.request_id = str(uuid.uuid4())[:8]

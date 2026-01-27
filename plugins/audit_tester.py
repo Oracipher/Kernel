@@ -1,9 +1,9 @@
 
 # plugins/audit_tester.py
 
-from interface import IPlugin
+from interface import Proot
 
-class Plugin(IPlugin):
+class Plugin(Proot):
     def start(self):
         self.api.log("测试者上线...")
         
