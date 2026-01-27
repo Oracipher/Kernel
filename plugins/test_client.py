@@ -1,8 +1,8 @@
 # plugins/test_client.py
-from interface import Proot
+from interface import Neuron
 import uuid
 
-class Plugin(Proot):
+class Plugin(Neuron):
     def start(self):
         # 生成一个唯一的请求ID
         self.request_id = str(uuid.uuid4())[:8]

@@ -7,7 +7,7 @@ import traceback
 import sys
 import json
 
-from interface import Proot
+from interface import Neuron
 from api import Omni
 
 class MicroKernel:
@@ -58,8 +58,8 @@ class MicroKernel:
                 plugin_instance = mod.Plugin(plugin_api)
                 
                 # 3. Check type inheritance
-                if not isinstance(plugin_instance, Proot):
-                    print(f"[!] Error: {name} does not inherit from Proot (Plugin Interface Root).")
+                if not isinstance(plugin_instance, Neuron):
+                    print(f"[!] Error: {name} does not inherit from Neuron (Plugin Interface).")
                     return
                     
                 self.loaded_plugins[name] = plugin_instance
@@ -100,12 +100,6 @@ class MicroKernel:
         if not os.path.exists(self.PLUGIN_DIR):
             print(f"[!] Plugin directory '{self.PLUGIN_DIR}' does not exist.")
             return
-        
-        # for filename in os.listdir(self.PLUGIN_DIR):
-        #     if filename.endswith(".py"):
-        #         name = os.path.splitext(filename)[0]
-        #         path = os.path.join(self.PLUGIN_DIR, filename)
-        #         self._action_loader(filename, name, path)
         
         for item in os.listdir(self.PLUGIN_DIR):
             full_path = os.path.join(self.PLUGIN_DIR, item)

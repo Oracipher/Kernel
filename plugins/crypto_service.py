@@ -1,10 +1,10 @@
 # plugins/crypto_service.py
-from interface import Proot
+from interface import Neuron
 import hashlib
 import base64
 # import time
 
-class Plugin(Proot):
+class Plugin(Neuron):
     def start(self):
         self.api.log("加密服务中心已启动，监听 req:sign ...")
         self.api.on("req:sign", self.handle_sign_request)

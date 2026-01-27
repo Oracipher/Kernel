@@ -1,9 +1,9 @@
 
 # plugins/audit_tester.py
 
-from interface import Proot
+from interface import Neuron
 
-class Plugin(Proot):
+class Plugin(Neuron):
     def start(self):
         self.api.log("测试者上线...")
         

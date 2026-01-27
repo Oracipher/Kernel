@@ -1,8 +1,8 @@
 
 # plugins/security_monitor.py
-from interface import Proot
+from interface import Neuron
 
-class Plugin(Proot):
+class Plugin(Neuron):
     def start(self):
         self.api.log("安保系统启动")
         self.api.on("risk_alert", self.handle_alert)

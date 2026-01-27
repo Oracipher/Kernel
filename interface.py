@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 
-class Proot(ABC):
+class Neuron(ABC):
     """
     插件基类接口 (Protocol)
     强制所有插件必须实现标准生命周期方法

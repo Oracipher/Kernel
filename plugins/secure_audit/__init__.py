@@ -1,11 +1,11 @@
 # plugins/secure_audit/__init__.py
 import os
 import json
-from interface import Proot
+from interface import Neuron
 from .src.utils import EnvLoader
 from .src.client import AuditClient
 
-class Plugin(Proot):
+class Plugin(Neuron):
     def start(self):
         self.api.log("正在挂载 Secure Audit 系统 (Fixed Version)...")
         
