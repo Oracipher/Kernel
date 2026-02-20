@@ -1,5 +1,5 @@
 
-# PyMicroKernel (PMK) 🔌
+# PyMicroKernel (PMK)
 
 > 一个轻量级、零依赖的 Python 微内核架构（Microkernel Architecture）参考实现。
 
